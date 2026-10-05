@@ -5,14 +5,14 @@ login-history table, the score-trend chart, and the map.
 """
 from datetime import datetime, timedelta
 
-from flask import Blueprint, render_template, redirect, session, jsonify, request
+from flask import Blueprint, render_template, redirect, session, jsonify, request, current_app
 
 from extensions import db
 from models.user import User
 from models.login_history import LoginHistory
-from services.utils import to_utc_iso, format_ist, device_label, score_label
+from models.behavioral_profile import BehavioralProfile
+from services.utils import to_utc_iso, format_ist, parse_user_agent
 from services.alerts import channel_config, send_all
-from services.decision_engine import ALLOW_THRESHOLD
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
@@ -24,26 +24,7 @@ def _current_user():
     return db.session.get(User, user_id)
 
 
-def _mask_email(email):
-    if not email or "@" not in email:
-        return email
-    name, domain = email.split("@", 1)
-    if len(name) <= 2:
-        masked = name[0] + "*"
-    else:
-        masked = name[0] + "*" * (len(name) - 2) + name[-1]
-    return f"{masked}@{domain}"
-
-
-def _mask_phone(phone):
-    if not phone:
-        return None
-    return f"****{phone[-4:]}"
-
-
 def _risk_level(user):
-    """Simple contextual risk read-out for the dashboard's security panel:
-    strikes since last success, plus failures in the last 24h."""
     recent_cutoff = datetime.utcnow() - timedelta(hours=24)
     recent_failures = LoginHistory.query.filter(
         LoginHistory.user_id == user.id,
@@ -77,58 +58,87 @@ def api_dashboard_data():
     if not user:
         return jsonify({"error": "not_authenticated"}), 401
 
-    history = (
+    all_history = (
         LoginHistory.query.filter_by(user_id=user.id)
         .order_by(LoginHistory.timestamp.desc())
-        .limit(50)
         .all()
     )
+    recent = all_history[:50]
 
-    total_attempts = LoginHistory.query.filter_by(user_id=user.id).count()
-    successful = LoginHistory.query.filter_by(user_id=user.id, decision="allowed").count()
-    suspicious = LoginHistory.query.filter_by(user_id=user.id, decision="blocked").count()
-    wrong_password = LoginHistory.query.filter_by(user_id=user.id, decision="wrong_password").count()
+    total = len(all_history)
+    allowed_rows = [h for h in all_history if h.decision == "allowed"]
+    blocked_rows = [h for h in all_history if h.decision == "blocked"]
+    wrong_pw_rows = [h for h in all_history if h.decision == "wrong_password"]
+
+    scored = [h.match_score for h in all_history if h.match_score is not None]
+    avg_score = round(sum(scored) / len(scored)) if scored else None
+
+    unique_ips = len({h.ip_address for h in all_history if h.ip_address})
+    unique_locations = len({h.location_label() for h in all_history if h.location_label() != "Unknown location"})
+    alerts_sent = sum(1 for h in all_history if h.email_alert_sent)
+
+    last_success = allowed_rows[0].timestamp if allowed_rows else None
+    failure_rows = [h for h in all_history if h.decision != "allowed"]
+    last_failure = failure_rows[0].timestamp if failure_rows else None
 
     history_json = []
-    for entry in history:
-        reasons = (entry.reasoning or "").split("\n") if entry.reasoning else []
+    for entry in recent:
+        reasons = [r for r in (entry.reasoning or "").split("\n") if r.strip()]
+        ua_info = parse_user_agent(entry.user_agent)
         history_json.append({
             "id": entry.id,
-            "timestamp": to_utc_iso(entry.timestamp),
-            "ip": entry.ip_address,
-            "location": entry.location_label(),
-            "latitude": entry.latitude,
-            "longitude": entry.longitude,
-            "mapUrl": entry.map_url(),
-            "device": device_label(entry.user_agent),
-            "matchScore": entry.match_score,
-            "scoreLabel": score_label(entry.match_score),
+            "ts": to_utc_iso(entry.timestamp),
+            "score": entry.match_score,
             "decision": entry.decision,
+            "browser": ua_info["browser"],
+            "os": ua_info["os"],
+            "device": ua_info["device"],
+            "ip": entry.ip_address,
+            "isp": entry.isp,
+            "location": entry.location_label(),
+            "lat": entry.latitude,
+            "lon": entry.longitude,
+            "mapUrl": entry.map_url(),
             "reasons": reasons,
-            "emailAlertSent": entry.email_alert_sent,
+            "alerts": {"email": entry.email_alert_sent},
             "trusted": entry.marked_trusted,
         })
 
+    profile = BehavioralProfile.query.filter_by(user_id=user.id).first()
+    profile_json = None
+    if profile:
+        profile_json = {
+            "samples": profile.sample_count,
+            "enrolledAt": to_utc_iso(profile.created_at),
+            "dwell": round(profile.average_dwell_time, 1),
+            "flight": round(profile.average_flight_time, 1),
+            "wpm": round(profile.average_typing_speed_wpm, 1),
+            "duration": round(profile.average_typing_duration, 2),
+        }
+
     return jsonify({
-        "serverTime": to_utc_iso(datetime.utcnow()),
         "stats": {
-            "totalAttempts": total_attempts,
-            "successfulLogins": successful,
-            "suspiciousAttempts": suspicious,
-            "wrongPasswordAttempts": wrong_password,
+            "risk": _risk_level(user),
+            "lastSuccess": to_utc_iso(last_success),
+            "lastFailure": to_utc_iso(last_failure),
+            "total": total,
+            "allowed": len(allowed_rows),
+            "blocked": len(blocked_rows),
+            "wrongPassword": len(wrong_pw_rows),
+            "avgScore": avg_score,
+            "uniqueLocations": unique_locations,
+            "uniqueIps": unique_ips,
+            "alertsSent": alerts_sent,
         },
         "security": {
-            "riskLevel": _risk_level(user),
-            "failedBehaviorStreak": user.failed_behavior_attempts,
-            "allowThreshold": ALLOW_THRESHOLD,
+            "strikes": user.failed_behavior_attempts,
+            "threshold": current_app.config.get("ALERT_AFTER_ATTEMPTS", 3),
+            "cooldownMinutes": current_app.config.get("ALERT_COOLDOWN_MINUTES", 2),
             "channels": channel_config(),
+            "hasEmail": bool(user.email),
         },
-        "profile": {
-            "username": user.username,
-            "email": _mask_email(user.email),
-            "phone": _mask_phone(user.phone_number),
-            "memberSince": to_utc_iso(user.created_at),
-        },
+        "user": {"email": user.email},
+        "profile": profile_json,
         "history": history_json,
     })
 
@@ -145,7 +155,7 @@ def api_test_alert():
         last_test_dt = datetime.fromisoformat(last_test)
         if (now - last_test_dt).total_seconds() < 20:
             wait = 20 - int((now - last_test_dt).total_seconds())
-            return jsonify({"error": "cooldown", "waitSeconds": wait}), 429
+            return jsonify({"error": f"Please wait {wait}s before testing again"}), 429
 
     session["last_test_alert_at"] = now.isoformat()
 
@@ -157,12 +167,12 @@ def api_test_alert():
         "match_score": 0,
         "reasons": ["This is a test alert triggered manually from the dashboard."],
         "attempt_time": format_ist(now),
-        "device": device_label(request.headers.get("User-Agent")),
+        "device": "Manual test",
         "isp": None,
         "kind": "test",
     }
     results = send_all(payload)
-    return jsonify(results)
+    return jsonify({"results": results})
 
 
 @dashboard_bp.route("/api/history/<int:history_id>/trust", methods=["POST"])
