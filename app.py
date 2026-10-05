@@ -346,7 +346,7 @@ def forgot_password():
     base_url = PUBLIC_BASE_URL or request.url_root.rstrip("/")
     reset_url = f"{base_url}/reset-password/{token}"
 
-    send_action_link_email(
+    email_ok, email_detail = send_action_link_email(
         to_email=user.email,
         username=user.username,
         title="Reset your password",
@@ -355,6 +355,7 @@ def forgot_password():
         action_url=reset_url,
         expiry_note="This link expires in 1 hour.",
     )
+    print(f"[forgot-password email] ok={email_ok} detail={email_detail}")
 
     return jsonify(generic)
 
@@ -423,7 +424,7 @@ def reset_profile_request():
     base_url = PUBLIC_BASE_URL or request.url_root.rstrip("/")
     confirm_url = f"{base_url}/reset-profile/confirm/{token}"
 
-    email_sent, _ = send_action_link_email(
+    email_sent, email_detail = send_action_link_email(
         to_email=user.email,
         username=user.username,
         title="Confirm typing-profile reset",
@@ -437,6 +438,8 @@ def reset_profile_request():
         expiry_note="This link expires in 1 hour.",
     )
 
+    print(f"[reset-profile email] ok={email_sent} detail={email_detail}")
+    
     if not email_sent:
         return jsonify({
             "success": False,
