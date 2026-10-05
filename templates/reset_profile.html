@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reset Typing Profile — SentinelType</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+  .recovery-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .recovery-card { max-width: 420px; width: 100%; background: rgba(15,23,42,0.75); border: 1px solid rgba(148,163,184,0.15);
+    border-radius: 16px; padding: 32px; color: #e2e8f0; }
+  .recovery-card h1 { font-size: 1.4rem; margin-bottom: 6px; }
+  .recovery-card p.sub { color: #94a3b8; font-size: 0.9rem; margin-bottom: 24px; }
+  .recovery-card input { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(148,163,184,0.25);
+    background: rgba(255,255,255,0.05); color: #e2e8f0; margin-bottom: 16px; font-size: 1rem; }
+  .recovery-card button { width: 100%; padding: 12px; border-radius: 10px; border: none; background: #67e8f9;
+    color: #0f172a; font-weight: 600; font-size: 1rem; cursor: pointer; }
+  .recovery-card button:disabled { opacity: 0.6; cursor: not-allowed; }
+  .recovery-card .msg { margin-top: 16px; padding: 12px; border-radius: 10px; font-size: 0.9rem; }
+  .recovery-card .msg.ok { background: rgba(52,211,153,0.15); color: #34d399; }
+  .recovery-card .msg.bad { background: rgba(248,113,113,0.15); color: #f87171; }
+  .recovery-card a.back { display: inline-block; margin-top: 18px; color: #67e8f9; font-size: 0.9rem; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="recovery-wrap">
+  <div class="recovery-card">
+    <h1>Login keeps failing?</h1>
+    <p class="sub">If your typing pattern keeps getting rejected, confirm your username and password below and we'll email you a link to wipe and redo your behavioral enrollment.</p>
+    <form id="resetProfileForm">
+      <input type="text" id="username" name="username" placeholder="Username" required>
+      <input type="password" id="password" name="password" placeholder="Password" required>
+      <button type="submit" id="submitBtn">Send reset link</button>
+    </form>
+    <div id="result"></div>
+    <a class="back" href="/">&larr; Back to login</a>
+  </div>
+</div>
+<script>
+document.getElementById("resetProfileForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById("submitBtn");
+  const result = document.getElementById("result");
+  const username = document.getElementById("username").value.trim();
+  const password = document.getElementById("password").value;
+
+  btn.disabled = true;
+  btn.textContent = "Sending...";
+  result.innerHTML = "";
+  try {
+    const res = await fetch("/reset-profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    result.innerHTML = `<div class="msg ${data.success ? "ok" : "bad"}">${data.message}</div>`;
+  } catch (err) {
+    result.innerHTML = `<div class="msg bad">Something went wrong. Please try again.</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Send reset link";
+  }
+});
+</script>
+</body>
+</html>
