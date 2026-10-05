@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SentinelType Dashboard</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+</head>
+<body>
+    <div class="orb orb-a"></div>
+    <div class="orb orb-b"></div>
+
+    <header class="topbar">
+        <div class="brand">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="url(#g)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a5b4fc"/><stop offset="1" stop-color="#67e8f9"/></linearGradient></defs>
+                <path d="M12 3l7 3v6c0 4.5-3 7.7-7 9-4-1.3-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/>
+            </svg>
+            <span>SentinelType</span>
+        </div>
+        <div class="topbar-right">
+            <span id="riskChip" class="chip">Risk: --</span>
+            <button id="refreshBtn" class="btn ghost" type="button">&#8635; Refresh</button>
+            <div class="user-chip"><span class="avatar">{{ username[:1]|upper }}</span><span class="uname">{{ username }}</span></div>
+            <a href="/logout" class="btn ghost">Log out</a>
+        </div>
+    </header>
+
+    <main class="dash">
+        <section class="hero">
+            <h1>Welcome back, <span class="grad">{{ username }}</span></h1>
+            <p id="heroSub" class="muted">Loading your security overview...</p>
+        </section>
+
+        <section class="stats" id="stats"></section>
+
+        <section class="grid g-map">
+            <div class="card map-card">
+                <div class="card-head">
+                    <h2>Login locations</h2>
+                    <span class="muted small" id="mapNote"></span>
+                </div>
+                <div class="map-shell">
+                    <div id="map"></div>
+                    <div id="mapEmpty" class="map-empty hidden"></div>
+                </div>
+            </div>
+
+            <div class="card" id="securityCard">
+                <div class="card-head"><h2>Account security</h2></div>
+                <div id="securityBody"></div>
+            </div>
+        </section>
+
+        <section class="grid g-two">
+            <div class="card">
+                <div class="card-head"><h2>Match score trend</h2><span class="muted small">dashed line = 80% pass mark</span></div>
+                <div class="chart-box"><canvas id="scoreChart"></canvas></div>
+            </div>
+            <div class="card">
+                <div class="card-head"><h2>Login outcomes</h2></div>
+                <div class="chart-box"><canvas id="outcomeChart"></canvas></div>
+            </div>
+        </section>
+
+        <section class="card" id="dnaCard">
+            <div class="card-head"><h2>Your typing DNA</h2><span class="muted small" id="dnaNote"></span></div>
+            <div class="dna" id="dnaBody"></div>
+        </section>
+
+        <section class="card">
+            <div class="card-head wrap">
+                <h2>Login activity</h2>
+                <div class="toolbar">
+                    <div class="chips" id="filters">
+                        <button type="button" class="fchip active" data-filter="all">All</button>
+                        <button type="button" class="fchip" data-filter="allowed">Allowed</button>
+                        <button type="button" class="fchip" data-filter="blocked">Blocked</button>
+                        <button type="button" class="fchip" data-filter="wrong_password">Wrong password</button>
+                    </div>
+                    <input id="searchBox" type="search" placeholder="Search IP, place, device..." autocomplete="off">
+                </div>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Time</th><th>Result</th><th>Match</th><th>Device</th>
+                            <th>IP address</th><th>Location</th><th>Alerts</th><th>Details</th><th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyBody"></tbody>
+                </table>
+            </div>
+            <p class="muted small foot" id="tzNote"></p>
+        </section>
+    </main>
+
+    <div id="toasts"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>

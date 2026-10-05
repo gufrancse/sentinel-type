@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SentinelType Register</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body>
+
+    <h1>SentinelType</h1>
+    <p>Create your account</p>
+
+    <form id="registerForm">
+        <label>Username</label>
+        <input
+            type="text"
+            id="username"
+            name="username"
+            autocomplete="username"
+            minlength="3"
+            required
+        >
+
+        <label>Email</label>
+        <input
+            type="email"
+            id="email"
+            name="email"
+            autocomplete="email"
+            required
+        >
+        <p class="field-hint">Used to send you an alert if a suspicious login is detected.</p>
+
+        <label>Password</label>
+        <input
+            type="password"
+            id="password"
+            name="password"
+            autocomplete="new-password"
+            minlength="8"
+            required
+        >
+
+        <label>Confirm Password</label>
+        <input
+            type="password"
+            id="confirmPassword"
+            name="confirmPassword"
+            autocomplete="new-password"
+            minlength="8"
+            required
+        >
+
+        <button type="submit">Create Account</button>
+    </form>
+
+    <p>
+        Already have an account?
+        <a href="/">Login</a>
+    </p>
+
+    <script src="{{ url_for('static', filename='js/register.js') }}"></script>
+</body>
+</html>

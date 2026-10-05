@@ -1,0 +1,286 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&display=swap');
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+    overflow-x: hidden;
+
+    font-family: 'Inter', Arial, sans-serif;
+
+    background: radial-gradient(circle at 20% 20%, #1e2a52 0%, #0b1024 45%, #05070f 100%);
+    color: #e2e8f0;
+    padding: 40px 20px;
+}
+
+/* --- Ambient floating glow orbs: cheap CSS-only "premium 3D" feel --- */
+body::before,
+body::after {
+    content: "";
+    position: fixed;
+    width: 480px;
+    height: 480px;
+    border-radius: 50%;
+    filter: blur(110px);
+    opacity: 0.35;
+    z-index: 0;
+    pointer-events: none;
+}
+
+body::before {
+    background: #6366f1;
+    top: -120px;
+    left: -120px;
+    animation: float-a 14s ease-in-out infinite;
+}
+
+body::after {
+    background: #06b6d4;
+    bottom: -140px;
+    right: -100px;
+    animation: float-b 16s ease-in-out infinite;
+}
+
+@keyframes float-a {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50%      { transform: translate(60px, 40px) scale(1.15); }
+}
+
+@keyframes float-b {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50%      { transform: translate(-50px, -30px) scale(1.1); }
+}
+
+h1 {
+    position: relative;
+    z-index: 1;
+    margin-bottom: 8px;
+    font-family: 'Poppins', sans-serif;
+    font-size: 44px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+
+    background: linear-gradient(120deg, #a5b4fc, #67e8f9 60%, #f0abfc);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+body > p {
+    position: relative;
+    z-index: 1;
+    margin-bottom: 30px;
+    color: #94a3b8;
+    font-size: 15px;
+    text-align: center;
+}
+
+form,
+.panel {
+    position: relative;
+    z-index: 1;
+    width: 400px;
+    max-width: 100%;
+    padding: 38px 36px;
+
+    background: rgba(23, 30, 55, 0.6);
+    backdrop-filter: blur(22px);
+    -webkit-backdrop-filter: blur(22px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+
+    box-shadow:
+        0 25px 60px rgba(0, 0, 0, 0.45),
+        0 2px 0 rgba(255, 255, 255, 0.05) inset,
+        0 -1px 0 rgba(0, 0, 0, 0.3) inset;
+}
+
+label {
+    display: block;
+    margin-bottom: 8px;
+
+    color: #cbd5e1;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+}
+
+input {
+    width: 100%;
+    padding: 13px 14px;
+    margin-bottom: 18px;
+
+    background: rgba(5, 8, 20, 0.6);
+    color: #f8fafc;
+
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 10px;
+
+    outline: none;
+    font-size: 15px;
+    font-family: 'Inter', sans-serif;
+
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.1s ease;
+}
+
+input:focus {
+    border-color: #67e8f9;
+    box-shadow: 0 0 0 4px rgba(103, 232, 249, 0.15);
+}
+
+input:disabled {
+    opacity: 0.5;
+}
+
+button {
+    width: 100%;
+    padding: 13px;
+    margin-top: 4px;
+
+    border: none;
+    border-radius: 10px;
+
+    background: linear-gradient(120deg, #6366f1, #06b6d4);
+    color: white;
+
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+
+    cursor: pointer;
+
+    box-shadow: 0 10px 25px rgba(99, 102, 241, 0.35);
+    transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+button:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 14px 32px rgba(99, 102, 241, 0.5);
+}
+
+button:active:not(:disabled) {
+    transform: translateY(0px) scale(0.98);
+}
+
+button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+a {
+    color: #67e8f9;
+    text-decoration: none;
+    font-weight: 600;
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.15s ease;
+}
+
+a:hover {
+    border-bottom-color: #67e8f9;
+}
+
+/* Link line under the form, e.g. "New user? Register" */
+.auth-switch {
+    position: relative;
+    z-index: 1;
+    margin-top: 22px;
+    color: #94a3b8;
+    font-size: 14px;
+    text-align: center;
+}
+
+.field-hint {
+    margin-top: -12px;
+    margin-bottom: 16px;
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.4;
+}
+
+/* Behavioral challenge phrase badge (enroll + login) */
+.challenge-badge {
+    display: block;
+    width: 100%;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+
+    background: rgba(99, 102, 241, 0.12);
+    border: 1px dashed rgba(103, 232, 249, 0.5);
+    border-radius: 10px;
+
+    font-family: 'Courier New', monospace;
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-align: center;
+    color: #67e8f9;
+    word-break: break-all;
+}
+
+.warning-note {
+    position: relative;
+    z-index: 1;
+    margin-top: 14px;
+    padding: 10px 14px;
+    max-width: 400px;
+
+    background: rgba(248, 113, 113, 0.08);
+    border: 1px solid rgba(248, 113, 113, 0.25);
+    border-radius: 10px;
+
+    color: #fca5a5;
+    font-size: 12.5px;
+    text-align: center;
+    line-height: 1.5;
+}
+
+#statusMessage {
+    position: relative;
+    z-index: 1;
+    margin-top: 16px;
+    color: #a5b4fc;
+    font-size: 14px;
+    text-align: center;
+    min-height: 20px;
+}
+
+#sampleCount {
+    color: #67e8f9;
+    font-weight: 700;
+}
+
+.progress-line {
+    position: relative;
+    z-index: 1;
+    color: #cbd5e1;
+    font-size: 14px;
+    margin-bottom: 18px;
+    text-align: center;
+}
+
+.progress-bar-track {
+    width: 100%;
+    height: 8px;
+    margin-bottom: 22px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.15);
+    overflow: hidden;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 999px;
+    background: linear-gradient(120deg, #6366f1, #06b6d4);
+    transition: width 0.3s ease;
+}

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SentinelType Login</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body>
+
+    <h1>SentinelType</h1>
+    <p>Behavioral Biometric Authentication</p>
+
+    <form id="loginForm">
+        <label>Username</label>
+        <input
+            type="text"
+            id="username"
+            name="username"
+            autocomplete="username"
+            required
+        >
+
+        <label>Password</label>
+        <input
+            type="password"
+            id="password"
+            name="password"
+            autocomplete="current-password"
+            required
+        >
+
+        <label>Type this to verify it's you</label>
+        <span id="challengePhrase" class="challenge-badge">{{ behavior_challenge }}</span>
+        <input
+            type="text"
+            id="challengeInput"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
+            placeholder="Type the phrase above exactly"
+            required
+        >
+
+        <button type="submit" id="loginButton" disabled>Login</button>
+    </form>
+
+    <p class="auth-switch">
+        New user? <a href="/register">Create an account</a>
+    </p>
+
+    <p class="auth-switch">
+        <a href="/forgot-password">Forgot password?</a>
+        &nbsp;&middot;&nbsp;
+        <a href="/reset-profile">Login keeps failing?</a>
+    </p>
+
+    <p class="warning-note">
+        Never set your real password equal to the phrase above — it's only
+        used to measure your typing rhythm, it isn't a secret.
+    </p>
+
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>

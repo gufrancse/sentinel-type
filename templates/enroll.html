@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>SentinelType Enrollment</title>
+
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body>
+
+    <h1>SentinelType</h1>
+    <p>Behavioral Profile Enrollment — type the phrase below naturally, 10 times</p>
+
+    <div class="panel">
+
+        <span id="enrollmentSentence" class="challenge-badge">{{ enrollment_challenge }}</span>
+
+        <div class="progress-line">
+            Sample <span id="sampleCount">0</span>/10
+        </div>
+
+        <div class="progress-bar-track">
+            <div id="progressBarFill" class="progress-bar-fill"></div>
+        </div>
+
+        <input
+            type="text"
+            id="typingText"
+            placeholder="Type the phrase above..."
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
+            autofocus
+        >
+
+        <button id="submitSample" disabled>
+            Submit Sample
+        </button>
+
+        <p id="statusMessage"></p>
+    </div>
+
+    <p class="warning-note">
+        This is only a typing-rhythm sample — please don't set your real
+        account password equal to this phrase.
+    </p>
+
+    <script src="{{ url_for('static', filename='js/enroll.js') }}"></script>
+
+</body>
+</html>
