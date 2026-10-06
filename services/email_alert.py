@@ -46,7 +46,7 @@ import requests
 from services.utils import ALERT_HEADLINES, score_label
 
 SMTP_HOST = "smtp.gmail.com"
-SMTP_PORT = 465
+SMTP_PORT = 587
 
 # OSM's tile usage policy requires a real, identifying User-Agent for
 # server-side fetches like this (as opposed to opaque email-client
@@ -121,7 +121,8 @@ def send_action_link_email(to_email, username, title, message_html, button_label
     message.attach(MIMEText(html_body, "html"))
 
     try:
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=ssl.create_default_context(), timeout=15) as server:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+            server.starttls(context=ssl.create_default_context())
             server.login(mail_username, mail_password)
             server.sendmail(mail_username, to_email, message.as_string())
         return True, f"Email sent to {to_email}"
@@ -268,7 +269,8 @@ def send_login_alert(to_email, username, ip_address, location_label, match_score
         message.attach(image_part)
 
     try:
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=ssl.create_default_context(), timeout=15) as server:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+            server.starttls(context=ssl.create_default_context())
             server.login(mail_username, mail_password)
             server.sendmail(mail_username, to_email, message.as_string())
         return True, f"Email sent to {to_email} (check Inbox and Spam)"
