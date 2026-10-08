@@ -26,7 +26,12 @@ load_dotenv()
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ["SECRET_KEY"]
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///sentinel_type.db"
+database_url = os.environ.get("DATABASE_URL", "sqlite:///sentinel_type.db")
+if database_url.startswith("postgres://"):
+    # Some providers hand out a URL with the old "postgres://" prefix,
+    # but SQLAlchemy needs "postgresql://" - this normalizes it either way.
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db.init_app(app)
