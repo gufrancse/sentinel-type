@@ -1,99 +1,68 @@
 """
-Module 8 — Real-Time Email Notification System (Gmail SMTP, free).
+Module 8 — Real-Time Email Notification System.
+
+Originally built on Gmail SMTP, but Render's free tier blocks outbound
+SMTP traffic entirely (both port 465 and 587 time out - confirmed by
+testing). Outbound HTTPS works fine, so this now sends through Brevo's
+transactional email HTTPS API instead of raw SMTP, which does the same
+job over a port that isn't blocked.
 
 Env vars (see .env.example):
-    MAIL_USERNAME       your Gmail address
-    MAIL_APP_PASSWORD   a Gmail *App Password* (16 chars; spaces are fine)
-                        https://myaccount.google.com/apppasswords
-                        (needs 2-Step Verification on the account)
-
-Returns (ok, detail) so callers/dashboard can show the exact reason when
-an email doesn't go out.
-
-Map image: hotlinking a map tile directly in the email (<img src="https://
-tile...">) does NOT work reliably - when Gmail/Outlook open the email,
-THEIR servers fetch the image with a generic/missing User-Agent, and
-OpenStreetMap's tile policy actively blocks that (the "Access blocked -
-not following tile usage policy" error you saw). The fix: WE fetch the
-tile ourselves, right here in Python, with a proper identifying
-User-Agent (which OSM's policy explicitly allows for low-volume,
-identified use), and embed the image BYTES directly into the email as
-an inline attachment (Content-ID). Gmail then just displays an attached
-picture - no external fetch happens when the email is opened, so it
-can't be blocked. If the one-time fetch fails for any reason (no
-internet on the server, OSM briefly down), we fall back to a CSS pin
-card so the email still looks complete either way.
+    BREVO_API_KEY    API key from https://app.brevo.com (Settings > SMTP & API)
+    MAIL_USERNAME    the sender email address, verified as a Brevo "Sender"
 """
 
 import os
-import smtplib
-import ssl
-from email.mime.image import MIMEImage
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from html import escape
-import socket
-_original_getaddrinfo = socket.getaddrinfo
-
-def _ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-    return _original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
-
-
-socket.getaddrinfo = _ipv4_only_getaddrinfo
 
 import requests
 
 from services.utils import ALERT_HEADLINES, score_label
 
-SMTP_HOST = "smtp.gmail.com"
-SMTP_PORT = 587
-
-# OSM's tile usage policy requires a real, identifying User-Agent for
-# server-side fetches like this (as opposed to opaque email-client
-# hotlinking, which is what was getting blocked before).
-_TILE_USER_AGENT = "SentinelType-CollegeProject/1.0 (behavioral-auth demo; contact: set-your-email-in-.env)"
+BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
 
 
-def _fetch_map_tile(lat, lon, zoom=13):
-    """
-    Downloads ONE OpenStreetMap tile covering (lat, lon).
-    Returns PNG bytes, or None if the fetch fails for any reason (this
-    must never raise - a missing map image should never break an alert).
-    """
+def _send_via_brevo(to_email, subject, html_body):
+    api_key = (os.environ.get("BREVO_API_KEY") or "").strip()
+    sender_email = (os.environ.get("MAIL_USERNAME") or "").strip()
+
+    if not api_key:
+        return False, "BREVO_API_KEY missing in .env"
+    if not sender_email:
+        return False, "MAIL_USERNAME (used as sender) missing in .env"
+    if not to_email:
+        return False, "This account has no email address"
+
+    payload = {
+        "sender": {"name": "SentinelType", "email": sender_email},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "htmlContent": html_body,
+    }
+
     try:
-        import math
-        n = 2 ** zoom
-        xtile = max(0, min(n - 1, int((lon + 180.0) / 360.0 * n)))
-        lat_rad = math.radians(lat)
-        ytile = max(0, min(n - 1, int(
-            (1.0 - math.log(math.tan(lat_rad) + 1 / math.cos(lat_rad)) / math.pi) / 2.0 * n
-        )))
-        url = f"https://tile.openstreetmap.org/{zoom}/{xtile}/{ytile}.png"
-
-        resp = requests.get(url, headers={"User-Agent": _TILE_USER_AGENT}, timeout=6)
-        if resp.status_code == 200 and resp.headers.get("Content-Type", "").startswith("image"):
-            return resp.content
-
-    except Exception:
-        pass
-
-    return None
+        resp = requests.post(
+            BREVO_API_URL,
+            headers={
+                "api-key": api_key,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            json=payload,
+            timeout=15,
+        )
+        if resp.status_code in (200, 201):
+            return True, f"Email sent to {to_email}"
+        return False, f"Brevo rejected the email ({resp.status_code}): {resp.text[:200]}"
+    except Exception as exc:
+        return False, f"Email failed: {exc}"
 
 
 def send_action_link_email(to_email, username, title, message_html, button_label, action_url, expiry_note):
     """
     Small reusable template for one-click confirmation emails (password
-    reset, "reset my typing profile", etc). Returns (ok, detail) like the
-    other senders here.
+    reset, "reset my typing profile", etc). Returns (ok, detail).
     """
-    mail_username = (os.environ.get("MAIL_USERNAME") or "").strip()
-    mail_password = (os.environ.get("MAIL_APP_PASSWORD") or "").replace(" ", "").strip()
-
-    if not mail_username or not mail_password:
-        return False, "MAIL_USERNAME / MAIL_APP_PASSWORD missing in .env"
-    if not to_email:
-        return False, "This account has no email address"
-
     html_body = f"""
     <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:480px;margin:0 auto;
                 background:#f8fafc;padding:28px;border-radius:16px;">
@@ -114,23 +83,7 @@ def send_action_link_email(to_email, username, title, message_html, button_label
       </p>
     </div>"""
 
-    message = MIMEMultipart("alternative")
-    message["Subject"] = f"SentinelType: {title}"
-    message["From"] = f"SentinelType <{mail_username}>"
-    message["To"] = to_email
-    message.attach(MIMEText(html_body, "html"))
-
-    try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
-            server.starttls(context=ssl.create_default_context())
-            server.login(mail_username, mail_password)
-            server.sendmail(mail_username, to_email, message.as_string())
-        return True, f"Email sent to {to_email}"
-    except smtplib.SMTPAuthenticationError:
-        return False, ("Gmail rejected the login - use a 16-character App Password "
-                       "(not your normal password) and make sure 2-Step Verification is on.")
-    except Exception as exc:
-        return False, f"Email failed: {exc}"
+    return _send_via_brevo(to_email, f"SentinelType: {title}", html_body)
 
 
 def _score_color(score):
@@ -143,14 +96,6 @@ def send_login_alert(to_email, username, ip_address, location_label, match_score
                      reasons, trust_url=None, latitude=None, longitude=None,
                      map_url=None, attempt_time=None, device=None, isp=None,
                      kind="behavior"):
-    mail_username = (os.environ.get("MAIL_USERNAME") or "").strip()
-    mail_password = (os.environ.get("MAIL_APP_PASSWORD") or "").replace(" ", "").strip()
-
-    if not mail_username or not mail_password:
-        return False, "MAIL_USERNAME / MAIL_APP_PASSWORD missing in .env"
-    if not to_email:
-        return False, "This account has no email address"
-
     headline = ALERT_HEADLINES.get(kind, ALERT_HEADLINES["behavior"])
     is_test = kind == "test"
 
@@ -181,42 +126,22 @@ def send_login_alert(to_email, username, ip_address, location_label, match_score
         rows += row("Device", escape(device))
 
     map_section = ""
-    tile_bytes = None
     if latitude is not None and longitude is not None:
         maps_link = map_url or f"https://www.google.com/maps?q={latitude},{longitude}"
-        tile_bytes = _fetch_map_tile(latitude, longitude)
-
-        if tile_bytes:
-            # Real embedded map image (referenced via cid: below, attached later)
-            map_section = f"""
-            <div style="text-align:center;margin:0 0 20px 0;">
-              <a href="{maps_link}" target="_blank" style="text-decoration:none;">
-                <img src="cid:maptile" width="220" height="220" alt="Approximate login location"
-                     style="border-radius:10px;border:1px solid #e2e8f0;display:inline-block;">
-              </a>
-              <div style="color:#64748b;font-size:11.5px;margin-top:6px;">{escape(location_label or "Unknown location")}</div>
-              <a href="{maps_link}" target="_blank"
-                 style="display:inline-block;margin-top:6px;font-size:13px;color:#2563eb;text-decoration:none;font-weight:600;">
-                 &#128205; Open exact location in Google Maps &rarr;
-              </a>
-            </div>"""
-        else:
-            # Fallback: fetch failed (e.g. no internet on the server right now) -
-            # a pure CSS pin card, which can never fail to render.
-            map_section = f"""
-            <div style="background:#eef2ff;border:1px solid #e2e8f0;border-radius:12px;
-                        padding:22px 20px 18px;text-align:center;margin:0 0 20px 0;">
-              <div style="width:32px;height:32px;background:#dc2626;border-radius:50% 50% 50% 0;
-                          transform:rotate(-45deg);margin:6px auto 18px;position:relative;">
-                <div style="width:12px;height:12px;background:#eef2ff;border-radius:50%;
-                            position:absolute;top:10px;left:10px;"></div>
-              </div>
-              <div style="font-weight:700;color:#1e293b;font-size:14px;">{escape(location_label or "Unknown location")}</div>
-              <a href="{maps_link}" target="_blank"
-                 style="display:inline-block;margin-top:12px;font-size:13px;color:#2563eb;text-decoration:none;font-weight:600;">
-                 &#128205; Open exact location in Google Maps &rarr;
-              </a>
-            </div>"""
+        map_section = f"""
+        <div style="background:#eef2ff;border:1px solid #e2e8f0;border-radius:12px;
+                    padding:22px 20px 18px;text-align:center;margin:0 0 20px 0;">
+          <div style="width:32px;height:32px;background:#dc2626;border-radius:50% 50% 50% 0;
+                      transform:rotate(-45deg);margin:6px auto 18px;position:relative;">
+            <div style="width:12px;height:12px;background:#eef2ff;border-radius:50%;
+                        position:absolute;top:10px;left:10px;"></div>
+          </div>
+          <div style="font-weight:700;color:#1e293b;font-size:14px;">{escape(location_label or "Unknown location")}</div>
+          <a href="{maps_link}" target="_blank"
+             style="display:inline-block;margin-top:12px;font-size:13px;color:#2563eb;text-decoration:none;font-weight:600;">
+             &#128205; Open exact location in Google Maps &rarr;
+          </a>
+        </div>"""
 
     trust_button = ""
     if trust_url and not is_test:
@@ -253,30 +178,5 @@ def send_login_alert(to_email, username, ip_address, location_label, match_score
     </div>"""
 
     prefix = "[TEST] " if is_test else ""
-    message = MIMEMultipart("related")
-    message["Subject"] = f"{prefix}SentinelType alert: {headline} ({username})"
-    message["From"] = f"SentinelType <{mail_username}>"
-    message["To"] = to_email
-
-    alt_part = MIMEMultipart("alternative")
-    alt_part.attach(MIMEText(html_body, "html"))
-    message.attach(alt_part)
-
-    if tile_bytes:
-        image_part = MIMEImage(tile_bytes, _subtype="png")
-        image_part.add_header("Content-ID", "<maptile>")
-        image_part.add_header("Content-Disposition", "inline", filename="map.png")
-        message.attach(image_part)
-
-    try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
-            server.starttls(context=ssl.create_default_context())
-            server.login(mail_username, mail_password)
-            server.sendmail(mail_username, to_email, message.as_string())
-        return True, f"Email sent to {to_email} (check Inbox and Spam)"
-
-    except smtplib.SMTPAuthenticationError:
-        return False, ("Gmail rejected the login - use a 16-character App Password "
-                       "(not your normal password) and make sure 2-Step Verification is on.")
-    except Exception as exc:
-        return False, f"Email failed: {exc}"
+    subject = f"{prefix}SentinelType alert: {headline} ({username})"
+    return _send_via_brevo(to_email, subject, html_body)
