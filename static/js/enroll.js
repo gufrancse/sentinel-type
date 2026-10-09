@@ -6,7 +6,28 @@ const statusMessage = document.getElementById("statusMessage");
 const challengeElement = document.getElementById("enrollmentSentence");
 
 const EXPECTED_TEXT = challengeElement.textContent.trim();
-const TOTAL_SAMPLES = 10;
+const TOTAL_SAMPLES = 7;
+
+// Same sanity-check ranges as the backend (app.py) - kept in sync so a
+// sample never gets accepted here only to be rejected later after all
+// samples are typed. These only catch broken/garbage input, not behavior
+// that's "wrong" - real security is the ML match done after enrollment.
+const LIMITS = {
+    averageDwellTime: [10, 1000],
+    averageFlightTime: [0, 8000],
+    typingDuration: [100, 180000],
+    typingSpeedWPM: [1, 200]
+};
+
+function checkRealisticBounds(features) {
+    for (const [field, [min, max]] of Object.entries(LIMITS)) {
+        const value = features[field];
+        if (value < min || value > max) {
+            return `That sample looked unusual (${field}). Let's try this one again - type a bit more naturally.`;
+        }
+    }
+    return null;
+}
 
 let keyDownTimes = {};
 let lastKeyUpTime = null;
@@ -249,6 +270,18 @@ submitButton.addEventListener("click", async () => {
         return;
     }
 
+            const boundsIssue = checkRealisticBounds(features);
+
+        if (boundsIssue) {
+
+            statusMessage.textContent = boundsIssue;
+
+            typingText.value = "";
+            resetCurrentSample();
+
+            return;
+        }
+
     const mouseFeatures = calculateMouseFeatures();
 
     completedSamples.push({
@@ -268,7 +301,7 @@ submitButton.addEventListener("click", async () => {
     }
 
     if (completedSamples.length === TOTAL_SAMPLES) {
-        statusMessage.textContent = "10 samples collected. Training your behavioral model...";
+        statusMessage.textContent = `${TOTAL_SAMPLES} samples collected. Saving enrollment...`;
         await submitEnrollment();
         return;
     }

@@ -696,8 +696,8 @@ def enrollment():
     if not isinstance(samples, list):
         return jsonify({"success": False, "message": "Samples must be a list"}), 400
 
-    if len(samples) != 10:
-        return jsonify({"success": False, "message": "Exactly 10 samples are required"}), 400
+    if len(samples) != 7:
+        return jsonify({"success": False, "message": "Exactly 7 samples are required"}), 400
 
     user_id = session.get("user_id")
 
@@ -724,9 +724,9 @@ def enrollment():
 
         if not 10 <= parsed["averageDwellTime"] <= 1000:
             return jsonify({"success": False, "message": f"Unrealistic dwell time in sample {index}"}), 400
-        if not 0 <= parsed["averageFlightTime"] <= 5000:
+        if not 0 <= parsed["averageFlightTime"] <= 8000:
             return jsonify({"success": False, "message": f"Unrealistic flight time in sample {index}"}), 400
-        if not 100 <= parsed["typingDuration"] <= 120000:
+        if not 100 <= parsed["typingDuration"] <= 180000:
             return jsonify({"success": False, "message": f"Unrealistic typing duration in sample {index}"}), 400
         if not 1 <= parsed["typingSpeedWPM"] <= 200:
             return jsonify({"success": False, "message": f"Unrealistic typing speed in sample {index}"}), 400
