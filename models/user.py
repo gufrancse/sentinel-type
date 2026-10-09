@@ -9,6 +9,7 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=True)
 
     email = db.Column(db.String(255), unique=True, nullable=False)
+    email_verified = db.Column(db.Boolean, nullable=False, default=False)
     phone_number = db.Column(db.String(20), nullable=True)  # optional, only needed for SMS alerts
 
     # Consecutive blocked behavioral attempts (password correct, behavior

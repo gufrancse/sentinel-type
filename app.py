@@ -92,6 +92,7 @@ app.register_blueprint(dashboard_bp)
 EXPECTED_COLUMNS = {
     "users": {
         "failed_behavior_attempts": "INTEGER NOT NULL DEFAULT 0",
+        "email_verified": "BOOLEAN NOT NULL DEFAULT 0",
     },
     "login_history": {
         "latitude": "FLOAT",
@@ -299,13 +300,54 @@ def register():
     session.clear()
     session["user_id"] = user.id
 
+    verify_token = serializer.dumps(user.id, salt="emailverify")
+    base_url = PUBLIC_BASE_URL or request.url_root.rstrip("/")
+    verify_url = f"{base_url}/verify-email/{verify_token}"
+
+    email_ok, email_detail = send_action_link_email(
+        to_email=user.email,
+        username=user.username,
+        title="Verify your email",
+        message_html=(
+            "Thanks for signing up for SentinelType! Click below to verify "
+            "this email address. You can finish behavioral enrollment now - "
+            "just verify before your next login."
+        ),
+        button_label="Verify my email",
+        action_url=verify_url,
+        expiry_note="This link expires in 24 hours.",
+    )
+    print(f"[verify-email] ok={email_ok} detail={email_detail}")
+
     print(f"New user registered: id={user.id}, username={user.username}")
 
     return jsonify({
         "success": True,
-        "message": "Registration successful",
+        "message": "Registration successful. Check your email to verify your account.",
         "redirect": "/enroll"
     }), 201
+
+
+@app.route("/verify-email/<token>")
+def verify_email(token):
+    try:
+        user_id = serializer.loads(token, salt="emailverify", max_age=EMAIL_VERIFY_TOKEN_MAX_AGE)
+    except SignatureExpired:
+        return "This verification link has expired. Please request a new one from the login page.", 400
+    except BadSignature:
+        return "This verification link is invalid.", 400
+
+    user = db.session.get(User, user_id)
+    if user is None:
+        return "Account not found.", 404
+
+    user.email_verified = True
+    db.session.commit()
+
+    return (
+        "Your email has been verified! You can now log in at "
+        f"<a href=\"/\">SentinelType</a>."
+    )
 
 
 # --------------------------------------------------------------------
@@ -320,6 +362,7 @@ def register():
 # --------------------------------------------------------------------
 
 RESET_TOKEN_MAX_AGE = 60 * 60  # 1 hour
+EMAIL_VERIFY_TOKEN_MAX_AGE = 24 * 60 * 60  # 24 hours
 
 
 @app.route("/forgot-password")
@@ -611,6 +654,12 @@ def process_login():
         register_failure(user, entry, location, ip_address, user_agent,
                          "password", None, reasons)
         return jsonify({"success": False, "message": "Invalid username or password"}), 401
+    
+    if not user.email_verified:
+        return jsonify({
+            "success": False,
+            "message": "Please verify your email before logging in. Check your inbox for the verification link."
+        }), 403
 
     session["user_id"] = user.id
 
