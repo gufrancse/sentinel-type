@@ -92,7 +92,7 @@ app.register_blueprint(dashboard_bp)
 EXPECTED_COLUMNS = {
     "users": {
         "failed_behavior_attempts": "INTEGER NOT NULL DEFAULT 0",
-        "email_verified": "BOOLEAN NOT NULL DEFAULT 0",
+        "email_verified": "BOOLEAN NOT NULL DEFAULT FALSE",
     },
     "login_history": {
         "latitude": "FLOAT",
