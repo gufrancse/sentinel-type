@@ -32,7 +32,9 @@ registerForm.addEventListener("submit", async (event) => {
         console.log("Registration Response:", data);
 
         if (response.ok) {
-            alert("Registration successful. Let's set up your typing profile.");
+            `Registration successful! A verification link has been sent to ${email}. ` +
+                `You can set up your typing profile now, but you'll need to verify your ` +
+                `email before you can log in again later.`
             window.location.href = data.redirect || "/enroll";
             return;
         }
