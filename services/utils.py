@@ -109,3 +109,16 @@ ALERT_HEADLINES = {
     "new_device": "Login From a New Device",
     "default": "Security Alert",
 }
+
+def device_fingerprint(user_agent):
+    """
+    A coarse, durable device identifier: just OS + device type (e.g.
+    "windows:desktop", "android:mobile"). Deliberately NOT based on the
+    exact browser version or full User-Agent string, since that changes
+    every time the browser auto-updates and would make every login look
+    like a "new device". This is just precise enough to tell a laptop
+    apart from a phone, which is what actually matters for behavioral
+    biometrics.
+    """
+    info = parse_user_agent(user_agent)
+    return f"{info['os']}:{info['device']}".lower()

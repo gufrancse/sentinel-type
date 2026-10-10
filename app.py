@@ -19,7 +19,7 @@ from services import ml_model
 from services.geolocation import get_client_ip, lookup_location, build_map_url
 from services.alerts import dispatch_in_background
 from services.email_alert import send_action_link_email
-from services.utils import normalize_phone, format_ist, device_label
+from services.utils import normalize_phone, format_ist, device_label, device_fingerprint
 from dashboard_routes import dashboard_bp
 
 load_dotenv()
@@ -117,6 +117,38 @@ def ensure_schema():
                     print(f"[schema] added column {table}.{name}")
         db.session.commit()
 
+def ensure_schema():
+    with app.app_context():
+        db.create_all()
+        inspector = inspect(db.engine)
+        for table, columns in EXPECTED_COLUMNS.items():
+            existing = {c["name"] for c in inspector.get_columns(table)}
+            for name, ddl in columns.items():
+                if name not in existing:
+                    db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+                    print(f"[schema] added column {table}.{name}")
+        db.session.commit()
+
+        # One-profile-per-user -> one-profile-PER-DEVICE migration.
+        # Production only (Postgres) - a fresh local SQLite db already
+        # matches the current model definition.
+        if db.engine.dialect.name == "postgresql":
+            bp_columns = {c["name"] for c in inspector.get_columns("behavioral_profiles")}
+            if "device_fingerprint" not in bp_columns:
+                db.session.execute(text(
+                    "ALTER TABLE behavioral_profiles "
+                    "ADD COLUMN device_fingerprint VARCHAR(64) NOT NULL DEFAULT 'unknown'"
+                ))
+                db.session.execute(text(
+                    "ALTER TABLE behavioral_profiles "
+                    "DROP CONSTRAINT IF EXISTS behavioral_profiles_user_id_key"
+                ))
+                db.session.execute(text(
+                    "ALTER TABLE behavioral_profiles "
+                    "ADD CONSTRAINT uq_profile_user_device UNIQUE (user_id, device_fingerprint)"
+                ))
+                db.session.commit()
+                print("[schema] migrated behavioral_profiles to per-device profiles")
 
 ensure_schema()
 
@@ -195,14 +227,20 @@ def enroll_page():
             "message": "You must register or login first"
         }), 401
 
+    user_agent = (request.headers.get("User-Agent") or "")[:255]
+    device_key = device_fingerprint(user_agent)
+
     profile = db.session.scalar(
-        select(BehavioralProfile).where(BehavioralProfile.user_id == user_id)
+        select(BehavioralProfile).where(
+            BehavioralProfile.user_id == user_id,
+            BehavioralProfile.device_fingerprint == device_key,
+        )
     )
 
     if profile is not None:
         return jsonify({
             "success": False,
-            "message": "Behavioral enrollment already completed"
+            "message": "Behavioral enrollment already completed for this device"
         }), 409
 
     return render_template("enroll.html", enrollment_challenge=BEHAVIOR_CHALLENGE_PHRASE)
@@ -211,6 +249,23 @@ def enroll_page():
 # --------------------------------------------------------------------
 # Trust this device (Module 9)
 # --------------------------------------------------------------------
+@app.route("/approve-device/<token>")
+def approve_device(token):
+    try:
+        payload = serializer.loads(token, salt="newdevice", max_age=NEW_DEVICE_TOKEN_MAX_AGE)
+    except SignatureExpired:
+        return "This approval link has expired. Please try logging in again to get a new one.", 400
+    except BadSignature:
+        return "This approval link is invalid.", 400
+
+    user = db.session.get(User, payload["user_id"])
+    if user is None:
+        return "Account not found.", 404
+
+    session.clear()
+    session["user_id"] = user.id
+
+    return redirect("/enroll")
 
 @app.route("/trust/<token>")
 def trust_device(token):
@@ -363,7 +418,7 @@ def verify_email(token):
 
 RESET_TOKEN_MAX_AGE = 60 * 60  # 1 hour
 EMAIL_VERIFY_TOKEN_MAX_AGE = 24 * 60 * 60  # 24 hours
-
+NEW_DEVICE_TOKEN_MAX_AGE = 24 * 60 * 60  # 24 hours
 
 @app.route("/forgot-password")
 def forgot_password_page():
@@ -661,18 +716,73 @@ def process_login():
             "message": "Please verify your email before logging in. Check your inbox for the verification link."
         }), 403
 
-    session["user_id"] = user.id
+    device_key = device_fingerprint(user_agent)
 
     profile = db.session.scalar(
-        select(BehavioralProfile).where(BehavioralProfile.user_id == user.id)
+        select(BehavioralProfile).where(
+            BehavioralProfile.user_id == user.id,
+            BehavioralProfile.device_fingerprint == device_key,
+        )
     )
 
     if profile is None:
+        has_any_profile = db.session.scalar(
+            select(BehavioralProfile.id).where(BehavioralProfile.user_id == user.id).limit(1)
+        ) is not None
+
+        if not has_any_profile:
+            # True first-time user - nothing to protect yet, normal enrollment.
+            session["user_id"] = user.id
+            return jsonify({
+                "success": True,
+                "message": "Login successful. Behavioral enrollment required.",
+                "redirect": "/enroll"
+            })
+
+        # A profile exists for a DIFFERENT device. Never auto-trust a new
+        # device just because it claims to be the user - only an email
+        # click (proving access to the real inbox) can approve it, same
+        # mechanism as password-reset / profile-reset.
+        reasons = [f"Login from an unrecognized device ({device_label(user_agent)})"]
+        entry = record_attempt(user, ip_address, location, user_agent,
+                               "new_device", None, reasons)
+
+        if alert_in_cooldown(user.id):
+            print(f"[new-device alert] suppressed for {user.username}: alert already sent recently")
+        else:
+            entry.alert_dispatched_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            db.session.commit()
+
+            base_url = PUBLIC_BASE_URL or request.url_root.rstrip("/")
+            approve_token = serializer.dumps(
+                {"user_id": user.id, "device_fingerprint": device_key},
+                salt="newdevice"
+            )
+            approve_url = f"{base_url}/approve-device/{approve_token}"
+
+            email_ok, email_detail = send_action_link_email(
+                to_email=user.email,
+                username=user.username,
+                title="New device login attempt",
+                message_html=(
+                    f"A login was attempted on your account from a device we "
+                    f"haven't seen before ({device_label(user_agent)}, "
+                    f"{entry.location_label()}). If this was you, click below to "
+                    f"approve it and set up a typing profile for this device. If "
+                    f"it wasn't you, change your password immediately."
+                ),
+                button_label="Yes, this is my device",
+                action_url=approve_url,
+                expiry_note="This link expires in 24 hours.",
+            )
+            print(f"[new-device email] ok={email_ok} detail={email_detail}")
+
         return jsonify({
-            "success": True,
-            "message": "Login successful. Behavioral enrollment required.",
-            "redirect": "/enroll"
-        })
+            "success": False,
+            "message": "New device detected. Check your email to approve it before logging in here."
+        }), 403
+
+    session["user_id"] = user.id
 
     if not behavioral_sample:
         return jsonify({"success": False, "message": "Behavioral sample is required"}), 400
@@ -753,6 +863,9 @@ def enrollment():
     if user_id is None:
         return jsonify({"success": False, "message": "User is not logged in"}), 401
 
+    user_agent = (request.headers.get("User-Agent") or "")[:255]
+    device_key = device_fingerprint(user_agent)
+
     validated_samples = []
 
     for index, sample in enumerate(samples, start=1):
@@ -806,12 +919,14 @@ def enrollment():
         ))
 
     profile = db.session.scalar(
-        select(BehavioralProfile).where(BehavioralProfile.user_id == user_id)
+        select(BehavioralProfile).where(BehavioralProfile.user_id == user_id,BehavioralProfile.device_fingerprint == device_key,
+        )
     )
 
     if profile is None:
         profile = BehavioralProfile(
             user_id=user_id,
+            device_fingerprint=device_key,
             average_dwell_time=average_dwell_time,
             average_flight_time=average_flight_time,
             average_typing_speed_wpm=average_typing_speed_wpm,
@@ -831,7 +946,7 @@ def enrollment():
         profile.sample_count = sample_count
 
     # --- Module 5: train the per-user Isolation Forest on these samples ---
-    model_path = ml_model.train_and_save(user_id, validated_samples)
+    model_path = ml_model.train_and_save(user_id, validated_samples, device_fingerprint=device_key)
     profile.ml_model_path = model_path
 
     db.session.commit()

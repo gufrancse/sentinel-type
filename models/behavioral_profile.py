@@ -3,15 +3,20 @@ from extensions import db
 
 class BehavioralProfile(db.Model):
     __tablename__ = "behavioral_profiles"
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "device_fingerprint", name="uq_profile_user_device"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
 
     user_id = db.Column(
         db.Integer,
         db.ForeignKey("users.id"),
-        unique=True,
-        nullable=False
+        nullable=False,
+        index=True
     )
+    
+    device_fingerprint = db.Column(db.String(64), nullable=False, default="unknown")
 
     # --- Keystroke dynamics baseline ---
     average_dwell_time = db.Column(db.Float, nullable=False)

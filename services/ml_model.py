@@ -31,8 +31,9 @@ FEATURE_ORDER = [
 ]
 
 
-def _model_path(user_id):
-    return os.path.join(MODEL_DIR, f"user_{user_id}.joblib")
+def _model_path(user_id, device_fingerprint="default"):
+    safe_fp = device_fingerprint.replace(":", "_").replace(" ", "_")
+    return os.path.join(MODEL_DIR, f"user_{user_id}_{safe_fp}.joblib")
 
 def delete_model(model_path):
     """Removes a user's saved model file, if it exists (used by profile reset)."""
@@ -43,10 +44,11 @@ def _to_vector(sample: dict):
     return [float(sample.get(f, 0) or 0) for f in FEATURE_ORDER]
 
 
-def train_and_save(user_id, samples):
+def train_and_save(user_id, samples, device_fingerprint="default"):
     """
-    samples: list of dicts, each with the FEATURE_ORDER keys
-    (the same 10 enrollment samples used to build the average profile).
+    samples: list of dicts, each with the FEATURE_ORDER keys.
+    device_fingerprint: which device this model/baseline belongs to -
+    each device gets its own model file (see _model_path).
     """
     os.makedirs(MODEL_DIR, exist_ok=True)
 
@@ -71,7 +73,7 @@ def train_and_save(user_id, samples):
     if score_max - score_min < 1e-9:
         score_max = score_min + 1e-6
 
-    path = _model_path(user_id)
+    path = _model_path(user_id, device_fingerprint)
     joblib.dump(
         {
             "model": model,
