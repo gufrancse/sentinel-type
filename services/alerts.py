@@ -34,6 +34,7 @@ def send_all(p, verify_delivery=False):
         to_email=p["to_email"], username=p["username"], ip_address=p["ip"],
         location_label=p["location_label"], match_score=p["match_score"],
         reasons=p["reasons"], trust_url=p.get("trust_url"),
+        change_password_url=p.get("change_password_url"), block_url=p.get("block_url"),
         latitude=p.get("lat"), longitude=p.get("lon"), map_url=p.get("map_url"),
         attempt_time=p.get("attempt_time"), device=p.get("device"), isp=p.get("isp"),
         kind=kind,

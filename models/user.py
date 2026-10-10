@@ -16,6 +16,7 @@ class User(db.Model):
     # didn't match). Reset to 0 on a successful login. Used to only alert
     # after repeated failures instead of on every single natural variation.
     failed_behavior_attempts = db.Column(db.Integer, nullable=False, default=0)
+    account_locked = db.Column(db.Boolean, nullable=False, default=False)
 
     created_at = db.Column(
         db.DateTime,

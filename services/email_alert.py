@@ -95,7 +95,7 @@ def _score_color(score):
 def send_login_alert(to_email, username, ip_address, location_label, match_score,
                      reasons, trust_url=None, latitude=None, longitude=None,
                      map_url=None, attempt_time=None, device=None, isp=None,
-                     kind="behavior"):
+                     kind="behavior", block_url=None, change_password_url=None):
     headline = ALERT_HEADLINES.get(kind, ALERT_HEADLINES["behavior"])
     is_test = kind == "test"
 
@@ -143,21 +143,44 @@ def send_login_alert(to_email, username, ip_address, location_label, match_score
           </a>
         </div>"""
 
-    trust_button = ""
-    if trust_url and not is_test:
-        trust_button = f"""
-        <a href="{trust_url}" target="_blank"
-           style="display:inline-block;background:#2563eb;color:#fff;padding:12px 22px;border-radius:10px;
-                  text-decoration:none;font-weight:600;font-size:14px;">&#9989; Yes, this was me</a>"""
+    is_success = kind == "success"
 
-    why_block = "" if is_test else f"""
+    action_buttons = ""
+    if not is_test and not is_success:
+        buttons = []
+        if trust_url:
+            buttons.append(
+                f'<a href="{trust_url}" target="_blank" '
+                f'style="display:inline-block;margin:4px 8px 4px 0;background:#16a34a;color:#fff;'
+                f'padding:10px 18px;border-radius:10px;text-decoration:none;font-weight:600;font-size:13px;">'
+                f'&#9989; This was me</a>'
+            )
+        if change_password_url:
+            buttons.append(
+                f'<a href="{change_password_url}" target="_blank" '
+                f'style="display:inline-block;margin:4px 8px 4px 0;background:#f59e0b;color:#fff;'
+                f'padding:10px 18px;border-radius:10px;text-decoration:none;font-weight:600;font-size:13px;">'
+                f'&#128273; Change my password</a>'
+            )
+        if block_url:
+            buttons.append(
+                f'<a href="{block_url}" target="_blank" '
+                f'style="display:inline-block;margin:4px 8px 4px 0;background:#dc2626;color:#fff;'
+                f'padding:10px 18px;border-radius:10px;text-decoration:none;font-weight:600;font-size:13px;">'
+                f'&#128683; This wasn\'t me - lock my account</a>'
+            )
+        action_buttons = "".join(buttons)
+
+    why_block = "" if (is_test or is_success) else f"""
         <p style="font-size:13px;color:#475569;margin:0 0 6px 0;font-weight:600;">Why it was flagged:</p>
         <ul style="font-size:13px;color:#475569;margin:0 0 22px 0;padding-left:20px;">{reasons_html}</ul>"""
 
-    footer = (
-        "This was only a test - nothing is wrong with your account."
-        if is_test else "If this wasn't you, change your password immediately."
-    )
+    if is_test:
+        footer = "This was only a test - nothing is wrong with your account."
+    elif is_success:
+        footer = "Just a record of this login. If this wasn't you, reset your password immediately from the login page."
+    else:
+        footer = "If this wasn't you, use the buttons above immediately."
 
     html_body = f"""
     <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:520px;margin:0 auto;
@@ -171,7 +194,7 @@ def send_login_alert(to_email, username, ip_address, location_label, match_score
       <table style="width:100%;border-collapse:collapse;margin-bottom:18px;">{rows}</table>
       {map_section}
       {why_block}
-      {trust_button}
+      {action_buttons}
       <p style="color:#94a3b8;font-size:11.5px;margin-top:24px;line-height:1.5;">
         {footer}<br>Sent automatically by SentinelType's behavioral authentication system.
       </p>

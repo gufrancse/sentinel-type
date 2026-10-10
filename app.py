@@ -18,7 +18,7 @@ from services.decision_engine import evaluate as evaluate_login
 from services import ml_model
 from services.geolocation import get_client_ip, lookup_location, build_map_url
 from services.alerts import dispatch_in_background
-from services.email_alert import send_action_link_email
+from services.email_alert import send_action_link_email, send_login_alert
 from services.utils import normalize_phone, format_ist, device_label, device_fingerprint
 from dashboard_routes import dashboard_bp
 
@@ -93,6 +93,7 @@ EXPECTED_COLUMNS = {
     "users": {
         "failed_behavior_attempts": "INTEGER NOT NULL DEFAULT 0",
         "email_verified": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "account_locked": "BOOLEAN NOT NULL DEFAULT FALSE",
     },
     "login_history": {
         "latitude": "FLOAT",
@@ -103,19 +104,6 @@ EXPECTED_COLUMNS = {
         "alert_dispatched_at": "DATETIME",
     },
 }
-
-
-def ensure_schema():
-    with app.app_context():
-        db.create_all()
-        inspector = inspect(db.engine)
-        for table, columns in EXPECTED_COLUMNS.items():
-            existing = {c["name"] for c in inspector.get_columns(table)}
-            for name, ddl in columns.items():
-                if name not in existing:
-                    db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
-                    print(f"[schema] added column {table}.{name}")
-        db.session.commit()
 
 def ensure_schema():
     with app.app_context():
@@ -266,6 +254,28 @@ def approve_device(token):
     session["user_id"] = user.id
 
     return redirect("/enroll")
+
+@app.route("/block-account/<token>")
+def block_account(token):
+    try:
+        user_id = serializer.loads(token, salt="blockaccount", max_age=RESET_TOKEN_MAX_AGE)
+    except SignatureExpired:
+        return "This link has expired.", 400
+    except BadSignature:
+        return "This link is invalid.", 400
+
+    user = db.session.get(User, user_id)
+    if user is None:
+        return "Account not found.", 404
+
+    user.account_locked = True
+    db.session.commit()
+
+    return (
+        "Your account has been locked for safety. No one - including you - can "
+        "log in until you reset your password. "
+        "<a href=\"/forgot-password\">Reset your password</a> to unlock it."
+    )
 
 @app.route("/trust/<token>")
 def trust_device(token):
@@ -646,10 +656,11 @@ def register_failure(user, entry, location, ip_address, user_agent, kind, match_
         entry.alert_dispatched_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
     db.session.commit()
-
     if should_alert:
         base_url = PUBLIC_BASE_URL or request.url_root.rstrip("/")
         trust_url = f"{base_url}/trust/{serializer.dumps(entry.id)}"
+        change_password_url = f"{base_url}/reset-password/{serializer.dumps(user.id, salt='pwreset')}"
+        block_url = f"{base_url}/block-account/{serializer.dumps(user.id, salt='blockaccount')}"
 
         dispatch_in_background(app, entry.id, {
             "kind": kind,
@@ -661,6 +672,8 @@ def register_failure(user, entry, location, ip_address, user_agent, kind, match_
             "match_score": match_score,
             "reasons": reasons,
             "trust_url": trust_url,
+            "change_password_url": change_password_url,
+            "block_url": block_url,
             "lat": location.get("lat"),
             "lon": location.get("lon"),
             "map_url": build_map_url(location.get("lat"), location.get("lon")),
@@ -716,6 +729,12 @@ def process_login():
             "message": "Please verify your email before logging in. Check your inbox for the verification link."
         }), 403
 
+    if user.account_locked:
+        return jsonify({
+            "success": False,
+            "message": "This account has been locked for security. Reset your password to unlock it."
+        }), 403
+
     device_key = device_fingerprint(user_agent)
 
     profile = db.session.scalar(
@@ -753,27 +772,32 @@ def process_login():
             entry.alert_dispatched_at = datetime.now(timezone.utc).replace(tzinfo=None)
             db.session.commit()
 
-            base_url = PUBLIC_BASE_URL or request.url_root.rstrip("/")
+                       base_url = PUBLIC_BASE_URL or request.url_root.rstrip("/")
             approve_token = serializer.dumps(
                 {"user_id": user.id, "device_fingerprint": device_key},
                 salt="newdevice"
             )
             approve_url = f"{base_url}/approve-device/{approve_token}"
+            change_password_url = f"{base_url}/reset-password/{serializer.dumps(user.id, salt='pwreset')}"
+            block_url = f"{base_url}/block-account/{serializer.dumps(user.id, salt='blockaccount')}"
 
-            email_ok, email_detail = send_action_link_email(
+            email_ok, email_detail = send_login_alert(
                 to_email=user.email,
                 username=user.username,
-                title="New device login attempt",
-                message_html=(
-                    f"A login was attempted on your account from a device we "
-                    f"haven't seen before ({device_label(user_agent)}, "
-                    f"{entry.location_label()}). If this was you, click below to "
-                    f"approve it and set up a typing profile for this device. If "
-                    f"it wasn't you, change your password immediately."
-                ),
-                button_label="Yes, this is my device",
-                action_url=approve_url,
-                expiry_note="This link expires in 24 hours.",
+                ip_address=ip_address,
+                location_label=entry.location_label(),
+                match_score=None,
+                reasons=reasons,
+                trust_url=approve_url,
+                change_password_url=change_password_url,
+                block_url=block_url,
+                latitude=location.get("lat"),
+                longitude=location.get("lon"),
+                map_url=build_map_url(location.get("lat"), location.get("lon")),
+                attempt_time=format_ist(),
+                device=device_label(user_agent),
+                isp=location.get("isp"),
+                kind="new_device",
             )
             print(f"[new-device email] ok={email_ok} detail={email_detail}")
 
@@ -829,6 +853,23 @@ def process_login():
     # Genuine login - reset the strike counter
     user.failed_behavior_attempts = 0
     db.session.commit()
+
+    dispatch_in_background(app, entry.id, {
+        "kind": "success",
+        "to_email": user.email,
+        "phone": user.phone_number,
+        "username": user.username,
+        "ip": ip_address,
+        "location_label": entry.location_label(),
+        "match_score": match_score,
+        "reasons": [],
+        "lat": location.get("lat"),
+        "lon": location.get("lon"),
+        "map_url": build_map_url(location.get("lat"), location.get("lon")),
+        "attempt_time": format_ist(),
+        "device": device_label(user_agent),
+        "isp": location.get("isp"),
+    })
 
     return jsonify({
         "success": True,

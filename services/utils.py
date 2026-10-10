@@ -107,6 +107,7 @@ ALERT_HEADLINES = {
     "behavior": "Suspicious Login Detected",
     "wrong_password": "Failed Login Attempt",
     "new_device": "Login From a New Device",
+    "success": "New Login to Your Account",
     "default": "Security Alert",
 }
 
