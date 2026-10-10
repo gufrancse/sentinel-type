@@ -28,8 +28,6 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ["SECRET_KEY"]
 database_url = os.environ.get("DATABASE_URL", "sqlite:///sentinel_type.db")
 if database_url.startswith("postgres://"):
-    # Some providers hand out a URL with the old "postgres://" prefix,
-    # but SQLAlchemy needs "postgresql://" - this normalizes it either way.
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
@@ -42,43 +40,16 @@ TRUST_TOKEN_MAX_AGE = 7 * 24 * 60 * 60  # 7 days
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-# --------------------------------------------------------------------
-# Fixed behavioral challenge phrase (Module 2/3).
-#
-# IMPORTANT: this is typed at BOTH enrollment and every login, on a
-# field that is separate from the real password. Using the SAME text
-# both times is what makes the typing-rhythm comparison meaningful —
-# comparing dwell/flight time across two DIFFERENT pieces of text
-# (e.g. a random enrollment phrase vs. the user's actual password)
-# is inherently noisy and was causing genuine users to get blocked.
-#
-# It looks like a password (mixed case + digit + special char) on
-# purpose, per your request — but it is NOT secret and must never be
-# reused as anyone's real account password.
-#
-# LENGTH MATTERS: averageDwellTime/averageFlightTime/typingSpeedWPM are
-# statistical averages computed over however many keystrokes are in this
-# phrase. With the old 11-character phrase, each login sample was built
-# from only ~11 keystrokes - too few for those averages to be stable,
-# so completely genuine logins were swinging by 20-40% run to run just
-# from normal statistical noise, not real behavioral difference. A
-# ~20-character phrase roughly doubles the keystrokes per sample, which
-# roughly halves that noise (variance of a mean shrinks as 1/n).
-# --------------------------------------------------------------------
+# Fixed phrase typed at both enrollment and every login (separate from the
+# real password) so dwell/flight-time comparisons are apples-to-apples.
+# Not secret - never reuse it as an actual account password.
 BEHAVIOR_CHALLENGE_PHRASE = "Ph0enix#Delta-92!Kx"
 
-# Consecutive failed attempts (wrong password OR behavior mismatch) before
-# we fire email alerts. We alert on the Nth consecutive failure and again
-# on every Nth after that. Set ALERT_AFTER_ATTEMPTS=1 in .env to get an
-# alert on every single failure (handy for demos).
+# Consecutive failures before an email alert fires (and every Nth after).
 ALERT_AFTER_ATTEMPTS = max(1, int(os.environ.get("ALERT_AFTER_ATTEMPTS", "3")))
-
-# After an alert goes out, stay quiet for this many minutes so a flood of
-# failures can't spam the account owner.
+# Minutes of silence after an alert, so a flood of failures can't spam the owner.
 ALERT_COOLDOWN_MINUTES = max(0, int(os.environ.get("ALERT_COOLDOWN_MINUTES", "2")))
-
-# Public URL used in email links. Set it to your ngrok / Render URL when
-# sharing the app, otherwise links point at localhost.
+# Public URL used in email links (Render/ngrok URL in production).
 PUBLIC_BASE_URL = (os.environ.get("PUBLIC_BASE_URL") or "").rstrip("/")
 
 app.config["ALERT_AFTER_ATTEMPTS"] = ALERT_AFTER_ATTEMPTS
@@ -86,9 +57,8 @@ app.config["ALERT_COOLDOWN_MINUTES"] = ALERT_COOLDOWN_MINUTES
 
 app.register_blueprint(dashboard_bp)
 
-# Columns added in newer versions. ensure_schema() adds any that are missing
-# to an existing sentinel_type.db, so you never have to delete the database
-# (and lose your enrolled users) after an update.
+# Columns added in newer versions - ensure_schema() adds any missing ones
+# to an existing database so you never lose enrolled users on an update.
 EXPECTED_COLUMNS = {
     "users": {
         "failed_behavior_attempts": "INTEGER NOT NULL DEFAULT 0",
@@ -105,6 +75,7 @@ EXPECTED_COLUMNS = {
     },
 }
 
+
 def ensure_schema():
     with app.app_context():
         db.create_all()
@@ -117,9 +88,7 @@ def ensure_schema():
                     print(f"[schema] added column {table}.{name}")
         db.session.commit()
 
-        # One-profile-per-user -> one-profile-PER-DEVICE migration.
-        # Production only (Postgres) - a fresh local SQLite db already
-        # matches the current model definition.
+        # One-profile-per-user -> one-profile-per-device migration (Postgres only).
         if db.engine.dialect.name == "postgresql":
             bp_columns = {c["name"] for c in inspector.get_columns("behavioral_profiles")}
             if "device_fingerprint" not in bp_columns:
@@ -138,6 +107,7 @@ def ensure_schema():
                 db.session.commit()
                 print("[schema] migrated behavioral_profiles to per-device profiles")
 
+
 ensure_schema()
 
 REQUIRED_SAMPLE_FIELDS = [
@@ -147,8 +117,7 @@ REQUIRED_SAMPLE_FIELDS = [
     "typingSpeedWPM",
 ]
 
-# Mouse dynamics fields are optional/additive (Module 3) — older/legacy
-# clients that don't send them still work, just with a weaker signal.
+# Mouse fields are optional/additive - older clients without them still work.
 OPTIONAL_SAMPLE_FIELDS = [
     "averageMouseSpeed",
     "averageClickInterval",
@@ -178,9 +147,8 @@ def validate_behavioral_sample(data):
 
 
 def sample_to_feature_dict(sample):
-    """Normalizes an incoming behavioral sample into the canonical
-    feature dict used everywhere downstream (ML model, decision engine,
-    stored records)."""
+    """Normalizes an incoming sample into the canonical feature dict used
+    everywhere downstream (ML model, decision engine, stored records)."""
     return {
         "averageDwellTime": float(sample["averageDwellTime"]),
         "averageFlightTime": float(sample["averageFlightTime"]),
@@ -235,8 +203,9 @@ def enroll_page():
 
 
 # --------------------------------------------------------------------
-# Trust this device (Module 9)
+# Device trust / approval
 # --------------------------------------------------------------------
+
 @app.route("/approve-device/<token>")
 def approve_device(token):
     try:
@@ -254,6 +223,7 @@ def approve_device(token):
     session["user_id"] = user.id
 
     return redirect("/enroll")
+
 
 @app.route("/block-account/<token>")
 def block_account(token):
@@ -276,6 +246,7 @@ def block_account(token):
         "log in until you reset your password. "
         "<a href=\"/forgot-password\">Reset your password</a> to unlock it."
     )
+
 
 @app.route("/trust/<token>")
 def trust_device(token):
@@ -383,7 +354,6 @@ def register():
         expiry_note="This link expires in 24 hours.",
     )
     print(f"[verify-email] ok={email_ok} detail={email_detail}")
-
     print(f"New user registered: id={user.id}, username={user.username}")
 
     return jsonify({
@@ -416,19 +386,13 @@ def verify_email(token):
 
 
 # --------------------------------------------------------------------
-# Account recovery: forgot password, and "reset my typing profile"
-#
-# Typing rhythm naturally drifts over days/devices/mood. Rather than
-# leaving a genuine user permanently locked out by the behavioral check,
-# this gives them a safe, email-verified way back in: confirm you own
-# the account's email, then redo enrollment from scratch. It reuses the
-# same signed-link mechanism as password reset, just with its own salt
-# so the two token types can never be confused with each other.
+# Account recovery: forgot password, reset typing profile
 # --------------------------------------------------------------------
 
 RESET_TOKEN_MAX_AGE = 60 * 60  # 1 hour
 EMAIL_VERIFY_TOKEN_MAX_AGE = 24 * 60 * 60  # 24 hours
 NEW_DEVICE_TOKEN_MAX_AGE = 24 * 60 * 60  # 24 hours
+
 
 @app.route("/forgot-password")
 def forgot_password_page():
@@ -450,8 +414,6 @@ def forgot_password():
 
     user = db.session.scalar(select(User).where(User.email == email))
 
-    # Always return the same generic message whether or not the email
-    # exists, so this can't be used to check which emails are registered.
     if user is None:
         return jsonify(generic)
 
@@ -511,6 +473,7 @@ def reset_password_submit(token):
 
     user.password_hash = generate_password_hash(password)
     user.failed_behavior_attempts = 0
+    user.account_locked = False
     db.session.commit()
 
     return jsonify({"success": True, "message": "Password updated. You can log in now.", "redirect": "/"})
@@ -530,7 +493,6 @@ def reset_profile_request():
     user = db.session.scalar(select(User).where(User.username == username))
 
     if user is None or not check_password_hash(user.password_hash, password):
-        # Same message as a normal failed login - doesn't reveal which part was wrong.
         return jsonify({"success": False, "message": "Invalid username or password"}), 401
 
     token = serializer.dumps(user.id, salt="profilereset")
@@ -542,9 +504,9 @@ def reset_profile_request():
         username=user.username,
         title="Confirm typing-profile reset",
         message_html=(
-            "We got a request to reset your typing profile (used for behavioral "
-            "login verification). Click below to confirm and re-enroll a fresh "
-            "profile. This link works once and expires in 1 hour."
+            "We got a request to reset your typing profile. Click below to "
+            "confirm and re-enroll a fresh profile. This link works once and "
+            "expires in 1 hour."
         ),
         button_label="Reset my typing profile",
         action_url=confirm_url,
@@ -552,12 +514,11 @@ def reset_profile_request():
     )
 
     print(f"[reset-profile email] ok={email_sent} detail={email_detail}")
-    
+
     if not email_sent:
         return jsonify({
             "success": False,
-            "message": "Password confirmed, but the confirmation email couldn't be sent "
-                       "(check MAIL_USERNAME / MAIL_APP_PASSWORD in .env)."
+            "message": "Password confirmed, but the confirmation email couldn't be sent."
         }), 500
 
     return jsonify({
@@ -599,11 +560,11 @@ def reset_profile_confirm(token):
 
 
 # --------------------------------------------------------------------
-# Login  (Modules 1, 2, 3, 4, 5, 6, 7, 8, 10 all meet here)
+# Login
 # --------------------------------------------------------------------
 
 def record_attempt(user, ip_address, location, user_agent, decision, match_score, reasons):
-    """Writes one row to login_history (every attempt is logged - Module 10)."""
+    """Writes one row to login_history for every attempt, allowed or blocked."""
     entry = LoginHistory(
         user_id=user.id,
         ip_address=ip_address,
@@ -636,11 +597,7 @@ def alert_in_cooldown(user_id):
 
 
 def register_failure(user, entry, location, ip_address, user_agent, kind, match_score, reasons):
-    """
-    Counts one more consecutive failure. On every Nth failure an alert is
-    sent (email, in a background thread). Returns True if an alert was
-    dispatched.
-    """
+    """Counts one more consecutive failure; alerts on every Nth one."""
     user.failed_behavior_attempts = (user.failed_behavior_attempts or 0) + 1
     strikes = user.failed_behavior_attempts
 
@@ -656,6 +613,7 @@ def register_failure(user, entry, location, ip_address, user_agent, kind, match_
         entry.alert_dispatched_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
     db.session.commit()
+
     if should_alert:
         base_url = PUBLIC_BASE_URL or request.url_root.rstrip("/")
         trust_url = f"{base_url}/trust/{serializer.dumps(entry.id)}"
@@ -700,9 +658,6 @@ def process_login():
     if not username or not password:
         return jsonify({"success": False, "message": "Username and password are required"}), 400
 
-    # IP + location + device are captured for EVERY attempt, allowed or
-    # blocked, so the dashboard has a full history (Module 10).
-    # (On localhost this resolves to your machine's public IP for demos.)
     ip_address = get_client_ip(request)
     location = lookup_location(ip_address)
     ip_address = location.get("ip") or ip_address
@@ -714,15 +669,13 @@ def process_login():
         return jsonify({"success": False, "message": "Invalid username or password"}), 401
 
     if not check_password_hash(user.password_hash, password):
-        # Wrong password on a real account: log it and count it as a strike,
-        # so repeated guessing triggers an alert.
         reasons = ["Incorrect password was entered"]
         entry = record_attempt(user, ip_address, location, user_agent,
                                "wrong_password", None, reasons)
         register_failure(user, entry, location, ip_address, user_agent,
                          "password", None, reasons)
         return jsonify({"success": False, "message": "Invalid username or password"}), 401
-    
+
     if not user.email_verified:
         return jsonify({
             "success": False,
@@ -750,7 +703,6 @@ def process_login():
         ) is not None
 
         if not has_any_profile:
-            # True first-time user - nothing to protect yet, normal enrollment.
             session["user_id"] = user.id
             return jsonify({
                 "success": True,
@@ -758,10 +710,8 @@ def process_login():
                 "redirect": "/enroll"
             })
 
-        # A profile exists for a DIFFERENT device. Never auto-trust a new
-        # device just because it claims to be the user - only an email
-        # click (proving access to the real inbox) can approve it, same
-        # mechanism as password-reset / profile-reset.
+        # Profile exists for a different device - never auto-trust a new
+        # device, only an email click (proving inbox access) can approve it.
         reasons = [f"Login from an unrecognized device ({device_label(user_agent)})"]
         entry = record_attempt(user, ip_address, location, user_agent,
                                "new_device", None, reasons)
@@ -772,7 +722,7 @@ def process_login():
             entry.alert_dispatched_at = datetime.now(timezone.utc).replace(tzinfo=None)
             db.session.commit()
 
-                       base_url = PUBLIC_BASE_URL or request.url_root.rstrip("/")
+            base_url = PUBLIC_BASE_URL or request.url_root.rstrip("/")
             approve_token = serializer.dumps(
                 {"user_id": user.id, "device_fingerprint": device_key},
                 salt="newdevice"
@@ -824,14 +774,12 @@ def process_login():
 
     sample = sample_to_feature_dict(behavioral_sample)
 
-    # --- Module 5/6/7: ML score + decision + explanation ---
     result = evaluate_login(user.id, profile, sample)
 
     match_score = result["match_score"]
     decision = result["decision"]
     reasons = result["reasons"]
 
-    # --- Module 10: log every attempt ---
     entry = record_attempt(user, ip_address, location, user_agent,
                            decision, match_score, reasons)
 
@@ -850,7 +798,6 @@ def process_login():
             "alertTriggered": alert_triggered
         }), 401
 
-    # Genuine login - reset the strike counter
     user.failed_behavior_attempts = 0
     db.session.commit()
 
@@ -881,7 +828,7 @@ def process_login():
 
 
 # --------------------------------------------------------------------
-# Enrollment  (Modules 1, 2, 3, 4, 5)
+# Enrollment
 # --------------------------------------------------------------------
 
 @app.route("/api/enrollment", methods=["POST"])
@@ -960,7 +907,9 @@ def enrollment():
         ))
 
     profile = db.session.scalar(
-        select(BehavioralProfile).where(BehavioralProfile.user_id == user_id,BehavioralProfile.device_fingerprint == device_key,
+        select(BehavioralProfile).where(
+            BehavioralProfile.user_id == user_id,
+            BehavioralProfile.device_fingerprint == device_key,
         )
     )
 
@@ -986,7 +935,6 @@ def enrollment():
         profile.average_click_interval = average_click_interval
         profile.sample_count = sample_count
 
-    # --- Module 5: train the per-user Isolation Forest on these samples ---
     model_path = ml_model.train_and_save(user_id, validated_samples, device_fingerprint=device_key)
     profile.ml_model_path = model_path
 
@@ -994,9 +942,6 @@ def enrollment():
 
     print(f"Enrollment completed: user={user_id}, samples={sample_count}, profile={profile.id}")
 
-    # Log the user out after enrollment so they go through a real login
-    # (with the behavioral check) right after, instead of skipping straight
-    # to the dashboard on the same session.
     session.clear()
 
     return jsonify({
