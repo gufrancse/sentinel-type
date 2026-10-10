@@ -393,6 +393,48 @@ RESET_TOKEN_MAX_AGE = 60 * 60  # 1 hour
 EMAIL_VERIFY_TOKEN_MAX_AGE = 24 * 60 * 60  # 24 hours
 NEW_DEVICE_TOKEN_MAX_AGE = 24 * 60 * 60  # 24 hours
 
+@app.route("/forgot-username")
+def forgot_username_page():
+    return render_template("forgot_username.html")
+
+
+@app.route("/forgot-username", methods=["POST"])
+def forgot_username():
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip()
+
+    generic = {
+        "success": True,
+        "message": "If that email is registered, the username has been sent to it."
+    }
+
+    if not email:
+        return jsonify({"success": False, "message": "Enter your email address"}), 400
+
+    user = db.session.scalar(select(User).where(User.email == email))
+
+    if user is None:
+        return jsonify(generic)
+
+    base_url = PUBLIC_BASE_URL or request.url_root.rstrip("/")
+    login_url = f"{base_url}/"
+
+    email_ok, email_detail = send_action_link_email(
+        to_email=user.email,
+        username=user.username,
+        title="Your SentinelType username",
+        message_html=(
+            "You (or someone) asked to recover the username linked to this email. "
+            f"Your username is:<br><br><strong style=\"font-size:18px;\">{user.username}</strong>"
+            "<br><br>If you didn't request this, you can safely ignore this email."
+        ),
+        button_label="Go to login",
+        action_url=login_url,
+        expiry_note="",
+    )
+    print(f"[forgot-username email] ok={email_ok} detail={email_detail}")
+
+    return jsonify(generic)
 
 @app.route("/forgot-password")
 def forgot_password_page():
