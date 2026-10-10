@@ -1,5 +1,5 @@
 const registerForm = document.getElementById("registerForm");
-
+const registerStatus = document.getElementById("registerStatus");
 registerForm.addEventListener("submit", async (event) => {
     event.preventDefault();
 
@@ -32,12 +32,21 @@ registerForm.addEventListener("submit", async (event) => {
         console.log("Registration Response:", data);
 
         if (response.ok) {
-            `Registration successful! A verification link has been sent to ${email}. ` +
-                `You can set up your typing profile now, but you'll need to verify your ` +
-                `email before you can log in again later.`
-            window.location.href = data.redirect || "/enroll";
+            registerStatus.textContent =
+                `Registration successful! A verification link has been sent to ${email}. ` +
+                `Redirecting you to set up your typing profile - don't forget to verify ` +
+                `your email before your next login.`;
+            registerStatus.style.color = "lightgreen";
+
+            setTimeout(() => {
+                window.location.href = data.redirect || "/enroll";
+            }, 2500);
+
             return;
         }
+
+        registerStatus.textContent = data.message;
+        registerStatus.style.color = "salmon";
 
         alert(data.message);
 
