@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, inspect, text
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_migrate import Migrate
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import os
 import re
@@ -34,6 +36,13 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db.init_app(app)
 migrate = Migrate(app, db)
+
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=[],
+    storage_uri="memory://",
+)
 
 serializer = URLSafeTimedSerializer(app.config["SECRET_KEY"])
 TRUST_TOKEN_MAX_AGE = 7 * 24 * 60 * 60  # 7 days
@@ -276,6 +285,7 @@ def trust_device(token):
 # --------------------------------------------------------------------
 
 @app.route("/register", methods=["POST"])
+@limiter.limit("5 per minute")
 def register():
     data = request.get_json(silent=True)
 
@@ -399,6 +409,7 @@ def forgot_username_page():
 
 
 @app.route("/forgot-username", methods=["POST"])
+@limiter.limit("5 per minute")
 def forgot_username():
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip()
@@ -442,6 +453,7 @@ def forgot_password_page():
 
 
 @app.route("/forgot-password", methods=["POST"])
+@limiter.limit("5 per minute")
 def forgot_password():
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip()
@@ -687,6 +699,7 @@ def register_failure(user, entry, location, ip_address, user_agent, kind, match_
 
 
 @app.route("/login", methods=["POST"])
+@limiter.limit("10 per minute")
 def process_login():
     data = request.get_json(silent=True)
 
