@@ -822,6 +822,32 @@ def process_login():
             "success": False,
             "message": "Please type the verification phrase exactly as shown"
         }), 400
+    
+    typed_challenge = (data.get("typedChallenge") or "").strip()
+    if typed_challenge != BEHAVIOR_CHALLENGE_PHRASE:
+        return jsonify({
+            "success": False,
+            "message": "Please type the verification phrase exactly as shown"
+        }), 400
+
+    if data.get("pasteDetected"):
+        reasons = [
+            "Verification phrase appears to have been pasted rather than "
+            "typed, which bypasses typing-rhythm verification"
+        ]
+        entry = record_attempt(user, ip_address, location, user_agent,
+                               "blocked", 0.0, reasons)
+        alert_triggered = register_failure(user, entry, location, ip_address,
+                                           user_agent, "behavior", 0.0, reasons)
+        session.clear()
+        return jsonify({
+            "success": False,
+            "message": "Behavioral verification failed",
+            "score": 0.0,
+            "reasons": reasons,
+            "attempt": user.failed_behavior_attempts,
+            "alertTriggered": alert_triggered
+        }), 401
 
     is_valid, validation_error = validate_behavioral_sample(behavioral_sample)
     if not is_valid:

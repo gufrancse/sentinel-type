@@ -7,6 +7,7 @@ let keyDownTimes = {};
 let lastKeyUpTime = null;
 let keystrokeData = [];
 let typingStartTime = null;
+let pasteDetected = false;
 
 /* MODULE 3 — mouse dynamics, tracked across the whole page */
 let mousePoints = [];
@@ -22,6 +23,7 @@ function resetKeystrokeData() {
     lastKeyUpTime = null;
     keystrokeData = [];
     typingStartTime = null;
+    pasteDetected = false;
 }
 
 function resetMouseData() {
@@ -34,6 +36,16 @@ challengeInput.addEventListener("focus", () => {
     resetMouseData();
 });
 
+/* Catches Ctrl+V, right-click paste, and drag-and-drop text — all of
+   these bypass real typing rhythm, so we flag them instead of letting
+   the behavioral score silently fail on near-zero dwell/flight times. */
+challengeInput.addEventListener("paste", () => {
+    pasteDetected = true;
+});
+
+challengeInput.addEventListener("drop", () => {
+    pasteDetected = true;
+});
 
 /* ================================
    MOUSE TRACKING (whole page)
@@ -202,7 +214,8 @@ loginForm.addEventListener("submit", async (event) => {
         username: formData.get("username"),
         password: formData.get("password"),
         typedChallenge: challengeInput.value,
-        behavioralSample: behavioralSample
+        behavioralSample: behavioralSample,
+        pasteDetected: pasteDetected
     };
 
     try {
