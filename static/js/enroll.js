@@ -33,6 +33,7 @@ let keyDownTimes = {};
 let lastKeyUpTime = null;
 let keystrokeData = [];
 let typingStartTime = null;
+let pasteDetected = false;
 
 /* MODULE 3 — mouse dynamics, reset per sample */
 let mousePoints = [];
@@ -50,7 +51,7 @@ function resetCurrentSample() {
     lastKeyUpTime = null;
     keystrokeData = [];
     typingStartTime = null;
-
+    pasteDetected = false;
     mousePoints = [];
     clickTimestamps = [];
 
@@ -64,6 +65,16 @@ function resetCurrentSample() {
 
 typingText.addEventListener("focus", () => {
     resetCurrentSample();
+});
+
+/* Catches Ctrl+V, right-click paste, and drag-and-drop text — a pasted
+   training sample would corrupt the baseline, not just one login. */
+typingText.addEventListener("paste", () => {
+    pasteDetected = true;
+});
+
+typingText.addEventListener("drop", () => {
+    pasteDetected = true;
 });
 
 
@@ -260,6 +271,15 @@ submitButton.addEventListener("click", async () => {
 
     if (typedText !== EXPECTED_TEXT) {
         statusMessage.textContent = "Please type the phrase exactly.";
+        return;
+    }
+
+        if (pasteDetected) {
+        statusMessage.textContent =
+            "Please type the phrase naturally instead of pasting it — this sample " +
+            "can't be used for your typing profile. Let's try this one again.";
+        typingText.value = "";
+        resetCurrentSample();
         return;
     }
 
