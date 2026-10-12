@@ -92,3 +92,43 @@ def build_map_url(lat, lon):
     if lat is None or lon is None:
         return None
     return f"https://www.google.com/maps?q={lat},{lon}"
+
+from math import radians, sin, cos, sqrt, atan2
+
+# Faster than this isn't humanly possible to travel between two logins -
+# used to flag physically impossible back-to-back logins. This is a strong
+# signal of a shared/stolen password being used from two places at once,
+# not just unusual typing behavior.
+MAX_PLAUSIBLE_SPEED_KMH = 900
+
+
+def haversine_km(lat1, lon1, lat2, lon2):
+    """Great-circle distance between two lat/lon points, in kilometers."""
+    R = 6371.0
+    phi1, phi2 = radians(lat1), radians(lat2)
+    dphi = radians(lat2 - lat1)
+    dlambda = radians(lon2 - lon1)
+    a = sin(dphi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(dlambda / 2) ** 2
+    return 2 * R * atan2(sqrt(a), sqrt(1 - a))
+
+
+def check_impossible_travel(prev_lat, prev_lon, prev_time, curr_lat, curr_lon, curr_time):
+    """
+    Compares a user's previous allowed login (location + time) against the
+    current attempt, and flags travel that's physically impossible.
+
+    Returns (is_impossible, distance_km, hours_elapsed, speed_kmh).
+    """
+    distance_km = haversine_km(prev_lat, prev_lon, curr_lat, curr_lon)
+
+    hours_elapsed = (curr_time - prev_time).total_seconds() / 3600.0
+    if hours_elapsed <= 0:
+        hours_elapsed = 0.01  # avoid divide-by-zero on near-simultaneous attempts
+
+    speed_kmh = distance_km / hours_elapsed
+
+    # Require a meaningful distance too, so IP/GPS jitter between two quick
+    # requests from the same city doesn't trigger a false positive.
+    is_impossible = distance_km > 50 and speed_kmh > MAX_PLAUSIBLE_SPEED_KMH
+
+    return is_impossible, round(distance_km, 1), round(hours_elapsed, 2), round(speed_kmh, 1)

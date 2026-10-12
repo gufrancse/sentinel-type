@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 from math import isfinite
 from services.decision_engine import evaluate as evaluate_login, adapt_profile, BASELINE_ADAPTATION_THRESHOLD
 from services import ml_model
-from services.geolocation import get_client_ip, lookup_location, build_map_url
+from services.geolocation import get_client_ip, lookup_location, build_map_url, check_impossible_travel
 from services.alerts import dispatch_in_background
 from services.email_alert import send_action_link_email, send_login_alert
 from services.utils import normalize_phone, format_ist, device_label, device_fingerprint
@@ -849,11 +849,42 @@ def process_login():
 
     sample = sample_to_feature_dict(behavioral_sample)
 
-    result = evaluate_login(user.id, profile, sample)
+      result = evaluate_login(user.id, profile, sample)
 
     match_score = result["match_score"]
     decision = result["decision"]
     reasons = result["reasons"]
+
+    # --- Impossible travel check ---
+    # Compare this attempt's location/time against the user's last
+    # ALLOWED login. If the implied travel speed is physically impossible,
+    # block regardless of behavioral match - a passed typing test doesn't
+    # explain being in two places at once.
+    previous_login = db.session.scalar(
+        select(LoginHistory)
+        .where(
+            LoginHistory.user_id == user.id,
+            LoginHistory.decision == "allowed",
+            LoginHistory.latitude.isnot(None),
+            LoginHistory.longitude.isnot(None),
+        )
+        .order_by(LoginHistory.timestamp.desc())
+        .limit(1)
+    )
+
+    if previous_login is not None and location.get("lat") is not None and location.get("lon") is not None:
+        is_impossible, distance_km, hours_elapsed, speed_kmh = check_impossible_travel(
+            previous_login.latitude, previous_login.longitude, previous_login.timestamp,
+            location["lat"], location["lon"],
+            datetime.now(timezone.utc).replace(tzinfo=None)
+        )
+
+        if is_impossible:
+            decision = "blocked"
+            reasons = [
+                f"Impossible travel: previous login was {distance_km} km away, "
+                f"{hours_elapsed} hours ago (would require {speed_kmh} km/h to be genuine)"
+            ] + reasons
 
     entry = record_attempt(user, ip_address, location, user_agent,
                            decision, match_score, reasons)
