@@ -15,8 +15,7 @@ import os
 import re
 from dotenv import load_dotenv
 from math import isfinite
-
-from services.decision_engine import evaluate as evaluate_login
+from services.decision_engine import evaluate as evaluate_login, adapt_profile, BASELINE_ADAPTATION_THRESHOLD
 from services import ml_model
 from services.geolocation import get_client_ip, lookup_location, build_map_url
 from services.alerts import dispatch_in_background
@@ -822,14 +821,9 @@ def process_login():
             "success": False,
             "message": "Please type the verification phrase exactly as shown"
         }), 400
-    
-    typed_challenge = (data.get("typedChallenge") or "").strip()
-    if typed_challenge != BEHAVIOR_CHALLENGE_PHRASE:
-        return jsonify({
-            "success": False,
-            "message": "Please type the verification phrase exactly as shown"
-        }), 400
 
+
+    
     if data.get("pasteDetected"):
         reasons = [
             "Verification phrase appears to have been pasted rather than "
@@ -880,6 +874,10 @@ def process_login():
         }), 401
 
     user.failed_behavior_attempts = 0
+
+    if match_score >= BASELINE_ADAPTATION_THRESHOLD:
+        adapt_profile(profile, sample)
+
     db.session.commit()
 
     dispatch_in_background(app, entry.id, {
