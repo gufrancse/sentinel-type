@@ -349,6 +349,35 @@
         setTimeout(() => map.invalidateSize(), 150);
     }
 
+        /* ------------------------------------------------ devices */
+
+    async function loadDevices() {
+        try {
+            const res = await fetch("/api/trusted-devices", { headers: { Accept: "application/json" } });
+            if (res.status === 401) return;
+            const data = await res.json();
+            renderDevices(data.devices);
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    function renderDevices(devices) {
+        const body = $("devicesBody");
+        if (!devices || !devices.length) {
+            body.innerHTML = `<p class="muted">No enrolled devices yet.</p>`;
+            return;
+        }
+        body.innerHTML = devices.map((d) => `
+            <div class="sec-row">
+                <span>
+                    <b>${esc(d.label)}</b>
+                    <span class="muted small">&nbsp;&middot;&nbsp; ${esc(d.samples)} samples &middot; enrolled ${esc(fmtDate(d.enrolledAt))} &middot; last used ${esc(timeAgo(d.lastUsed))}</span>
+                </span>
+                <button class="btn ghost tiny" data-remove-device="${d.id}" type="button">Remove</button>
+            </div>
+        `).join("");
+    }
     /* ------------------------------------------------ table */
 
     function visibleRows() {
@@ -429,6 +458,16 @@
             return;
         }
 
+                const removeDevice = event.target.closest("[data-remove-device]");
+        if (removeDevice) {
+            if (!confirm("Remove this device? You'll need to go through the new-device email approval again to use it here.")) return;
+            removeDevice.disabled = true;
+            const res = await fetch(`/api/trusted-devices/${removeDevice.dataset.removeDevice}`, { method: "DELETE" });
+            if (res.ok) { toast("Device removed"); loadDevices(); }
+            else { toast("Could not remove device", "bad"); removeDevice.disabled = false; }
+            return;
+        }
+
         const chip = event.target.closest(".fchip");
         if (chip) {
             document.querySelectorAll(".fchip").forEach((c) => c.classList.toggle("active", c === chip));
@@ -444,6 +483,7 @@
 
     $("refreshBtn").addEventListener("click", async () => {
         await load();
+        await loadDevices();
         toast("Dashboard refreshed");
     });
 
@@ -451,4 +491,5 @@
     setInterval(() => { if (!document.hidden) load(); }, 30000);
 
     load();
+    loadDevices();
 })();

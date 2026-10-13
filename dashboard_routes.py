@@ -13,7 +13,7 @@ from models.login_history import LoginHistory
 from models.behavioral_profile import BehavioralProfile
 from services.utils import to_utc_iso, format_ist, parse_user_agent
 from services.alerts import channel_config, send_all
-
+from services import ml_model
 dashboard_bp = Blueprint("dashboard", __name__)
 
 
@@ -186,5 +186,49 @@ def api_mark_trusted(history_id):
         return jsonify({"error": "not_found"}), 404
 
     entry.marked_trusted = True
+    db.session.commit()
+    return jsonify({"ok": True})
+@dashboard_bp.route("/api/trusted-devices")
+def api_trusted_devices():
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "not_authenticated"}), 401
+
+    profiles = (
+        BehavioralProfile.query.filter_by(user_id=user.id)
+        .order_by(BehavioralProfile.updated_at.desc())
+        .all()
+    )
+
+    devices = []
+    for p in profiles:
+        parts = (p.device_fingerprint or "unknown:unknown").split(":")
+        os_name = parts[0].title() if len(parts) > 0 and parts[0] else "Unknown"
+        device_type = parts[1].title() if len(parts) > 1 and parts[1] else "Unknown"
+        devices.append({
+            "id": p.id,
+            "label": f"{os_name} ({device_type})",
+            "samples": p.sample_count,
+            "enrolledAt": to_utc_iso(p.created_at),
+            "lastUsed": to_utc_iso(p.updated_at),
+        })
+
+    return jsonify({"devices": devices})
+
+
+@dashboard_bp.route("/api/trusted-devices/<int:profile_id>", methods=["DELETE"])
+def api_remove_trusted_device(profile_id):
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "not_authenticated"}), 401
+
+    profile = db.session.get(BehavioralProfile, profile_id)
+    if not profile or profile.user_id != user.id:
+        return jsonify({"error": "not_found"}), 404
+
+    if profile.ml_model_path:
+        ml_model.delete_model(profile.ml_model_path)
+
+    db.session.delete(profile)
     db.session.commit()
     return jsonify({"ok": True})
