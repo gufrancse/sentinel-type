@@ -64,6 +64,20 @@
         used to measure your typing rhythm, it isn't a secret.
     </p>
 
+    <div id="otpSection" style="display:none; margin-top:20px;">
+        <label>Verification code</label>
+        <input
+            type="text"
+            id="otpInput"
+            maxlength="6"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            placeholder="6-digit code from your email"
+        >
+        <button type="button" id="otpSubmitBtn">Verify code</button>
+        <p id="otpStatus" style="margin-top:10px;"></p>
+    </div>
+
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 </body>
 </html>

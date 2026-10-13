@@ -236,6 +236,10 @@ loginForm.addEventListener("submit", async (event) => {
                 return;
             }
 
+        } else if (data.requiresOtp) {
+            document.getElementById("otpSection").style.display = "block";
+            document.getElementById("otpStatus").textContent = data.message || "Enter the code sent to your email.";
+            document.getElementById("otpStatus").style.color = "#94a3b8";
         } else {
             const reasonsText = data.reasons ? "\n\n" + data.reasons.join("\n") : "";
             alert((data.message || "Login failed.") + reasonsText);
@@ -249,5 +253,39 @@ loginForm.addEventListener("submit", async (event) => {
     } catch (error) {
         console.error("Login request failed:", error);
         alert("Login request failed. Please try again.");
+    }
+});
+document.getElementById("otpSubmitBtn").addEventListener("click", async () => {
+    const otp = document.getElementById("otpInput").value.trim();
+    const statusEl = document.getElementById("otpStatus");
+
+    if (otp.length !== 6) {
+        statusEl.textContent = "Enter the 6-digit code.";
+        statusEl.style.color = "salmon";
+        return;
+    }
+
+    try {
+        const response = await fetch("/verify-otp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ otp })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            statusEl.textContent = data.message || "Verified!";
+            statusEl.style.color = "lightgreen";
+            setTimeout(() => {
+                window.location.href = data.redirect || "/dashboard";
+            }, 800);
+        } else {
+            statusEl.textContent = data.message || "Verification failed.";
+            statusEl.style.color = "salmon";
+        }
+    } catch (error) {
+        statusEl.textContent = "Request failed. Please try again.";
+        statusEl.style.color = "salmon";
     }
 });

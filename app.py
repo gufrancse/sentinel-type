@@ -13,6 +13,7 @@ from flask_limiter.util import get_remote_address
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import os
 import re
+import secrets
 from dotenv import load_dotenv
 from math import isfinite
 from services.decision_engine import evaluate as evaluate_login, adapt_profile, BASELINE_ADAPTATION_THRESHOLD
@@ -892,6 +893,40 @@ def process_login():
     entry = record_attempt(user, ip_address, location, user_agent,
                            decision, match_score, reasons)
 
+    if decision == "challenge":
+        otp_code = f"{secrets.randbelow(1000000):06d}"
+        session["otp_pending"] = {
+            "user_id": user.id,
+            "otp_hash": generate_password_hash(otp_code),
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+            "match_score": match_score,
+            "history_id": entry.id,
+        }
+
+        base_url = PUBLIC_BASE_URL or request.url_root.rstrip("/")
+        email_ok, email_detail = send_action_link_email(
+            to_email=user.email,
+            username=user.username,
+            title="Your SentinelType verification code",
+            message_html=(
+                "Your typing pattern was a partial match, so we need one more check "
+                "before letting you in. Enter this code to finish logging in:<br><br>"
+                f"<strong style=\"font-size:28px;letter-spacing:4px;\">{otp_code}</strong>"
+                "<br><br>This code expires in 5 minutes."
+            ),
+            button_label="Go to login",
+            action_url=f"{base_url}/",
+            expiry_note="This code expires in 5 minutes.",
+        )
+        print(f"[otp email] ok={email_ok} detail={email_detail}")
+
+        return jsonify({
+            "success": False,
+            "requiresOtp": True,
+            "message": "Your typing pattern was a partial match. Enter the verification code sent to your email.",
+            "reasons": reasons
+        }), 401
+
     if decision == "blocked":
         session.clear()
 
@@ -943,6 +978,62 @@ def process_login():
 # --------------------------------------------------------------------
 # Enrollment
 # --------------------------------------------------------------------
+@app.route("/verify-otp", methods=["POST"])
+@limiter.limit("10 per minute")
+def verify_otp():
+    data = request.get_json(silent=True) or {}
+    otp_input = (data.get("otp") or "").strip()
+
+    pending = session.get("otp_pending")
+    if not pending:
+        return jsonify({"success": False, "message": "No pending verification. Please log in again."}), 400
+
+    expires_at = datetime.fromisoformat(pending["expires_at"])
+    if datetime.now(timezone.utc) > expires_at:
+        session.pop("otp_pending", None)
+        return jsonify({"success": False, "message": "This code has expired. Please log in again."}), 400
+
+    if not check_password_hash(pending["otp_hash"], otp_input):
+        return jsonify({"success": False, "message": "Incorrect code. Please try again."}), 401
+
+    user = db.session.get(User, pending["user_id"])
+    if user is None:
+        session.pop("otp_pending", None)
+        return jsonify({"success": False, "message": "Account not found."}), 404
+
+    entry = db.session.get(LoginHistory, pending["history_id"])
+    if entry:
+        entry.decision = "allowed"
+        entry.reasoning = (entry.reasoning or "") + "\nVerified via email OTP"
+
+    user.failed_behavior_attempts = 0
+    db.session.commit()
+
+    session.pop("otp_pending", None)
+    session["user_id"] = user.id
+
+    ip_address = get_client_ip(request)
+    location = lookup_location(ip_address)
+    user_agent = (request.headers.get("User-Agent") or "")[:255]
+
+    dispatch_in_background(app, entry.id if entry else None, {
+        "kind": "success",
+        "to_email": user.email,
+        "phone": user.phone_number,
+        "username": user.username,
+        "ip": ip_address,
+        "location_label": entry.location_label() if entry else "Unknown location",
+        "match_score": pending["match_score"],
+        "reasons": ["Verified via email OTP after a partial behavioral match"],
+        "lat": location.get("lat"),
+        "lon": location.get("lon"),
+        "map_url": build_map_url(location.get("lat"), location.get("lon")),
+        "attempt_time": format_ist(),
+        "device": device_label(user_agent),
+        "isp": location.get("isp"),
+    })
+
+    return jsonify({"success": True, "message": "Verified! Logging you in.", "redirect": "/dashboard"})
 
 @app.route("/api/enrollment", methods=["POST"])
 def enrollment():

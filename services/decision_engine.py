@@ -1,6 +1,7 @@
 from services import ml_model
 from services.behavioral_verification import calculate_behavior_score, explain_differences
 ALLOW_THRESHOLD = 50.0
+CHALLENGE_THRESHOLD = 30.0
 ML_WEIGHT = 0.4
 DIFF_WEIGHT = 0.6
 BASELINE_ADAPTATION_THRESHOLD = 80.0
@@ -13,7 +14,12 @@ def evaluate(user_id, profile, sample: dict):
         match_score = round(ML_WEIGHT * ml_score + DIFF_WEIGHT * diff_match, 2)
     else:
         match_score = diff_match
-    decision = "allowed" if match_score >= ALLOW_THRESHOLD else "blocked"
+        if match_score >= ALLOW_THRESHOLD:
+            decision = "allowed"
+        elif match_score >= CHALLENGE_THRESHOLD:
+            decision = "challenge"
+        else:
+            decision = "blocked"
     reasons = explain_differences(differences)
     return {
         "match_score": match_score,
