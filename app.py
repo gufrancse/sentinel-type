@@ -849,7 +849,7 @@ def process_login():
 
     sample = sample_to_feature_dict(behavioral_sample)
 
-      result = evaluate_login(user.id, profile, sample)
+    result = evaluate_login(user.id, profile, sample)
 
     match_score = result["match_score"]
     decision = result["decision"]
