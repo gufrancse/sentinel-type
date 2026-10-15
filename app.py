@@ -56,6 +56,7 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 # real password) so dwell/flight-time comparisons are apples-to-apples.
 # Not secret - never reuse it as an actual account password.
 DECOY_CHALLENGE_PHRASE = "Nova31$Ember64"
+LEGACY_CHALLENGE_PHRASE = "Ph0enix#Delta-92!Kx"
 
 # Consecutive failures before an email alert fires (and every Nth after).
 ALERT_AFTER_ATTEMPTS = max(1, int(os.environ.get("ALERT_AFTER_ATTEMPTS", "3")))
@@ -105,6 +106,14 @@ def ensure_schema():
                     db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
                     print(f"[schema] added column {table}.{name}")
         db.session.commit()
+
+        backfilled = db.session.execute(
+            text("UPDATE users SET challenge_phrase = :legacy WHERE challenge_phrase IS NULL"),
+            {"legacy": LEGACY_CHALLENGE_PHRASE}
+        ).rowcount
+        if backfilled:
+            db.session.commit()
+            print(f"[schema] backfilled challenge_phrase for {backfilled} existing user(s)")
 
         # One-profile-per-user -> one-profile-per-device migration (Postgres only).
         if db.engine.dialect.name == "postgresql":
