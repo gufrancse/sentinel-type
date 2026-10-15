@@ -18,6 +18,16 @@ class User(db.Model):
     failed_behavior_attempts = db.Column(db.Integer, nullable=False, default=0)
     account_locked = db.Column(db.Boolean, nullable=False, default=False)
 
+    challenge_attempts = db.Column(db.Integer, nullable=False, default=0)
+    locked_until = db.Column(db.DateTime, nullable=True)
+    challenge_phrase = db.Column(db.String(64), nullable=True)
+
+    otp_hash = db.Column(db.String(255), nullable=True)
+    otp_expires_at = db.Column(db.DateTime, nullable=True)
+    otp_history_id = db.Column(db.Integer, nullable=True)
+
+    challenge_phrase = db.Column(db.String(64), nullable=True)
+
     created_at = db.Column(
         db.DateTime,
         server_default=db.func.current_timestamp()

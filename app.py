@@ -21,7 +21,7 @@ from services import ml_model
 from services.geolocation import get_client_ip, lookup_location, build_map_url, check_impossible_travel
 from services.alerts import dispatch_in_background
 from services.email_alert import send_action_link_email, send_login_alert
-from services.utils import normalize_phone, format_ist, device_label, device_fingerprint
+from services.utils import normalize_phone, format_ist, device_label, device_fingerprint, generate_challenge_phrase
 from dashboard_routes import dashboard_bp
 
 load_dotenv()
@@ -55,7 +55,7 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 # Fixed phrase typed at both enrollment and every login (separate from the
 # real password) so dwell/flight-time comparisons are apples-to-apples.
 # Not secret - never reuse it as an actual account password.
-BEHAVIOR_CHALLENGE_PHRASE = "Ph0enix#Delta-92!Kx"
+DECOY_CHALLENGE_PHRASE = "Nova31$Ember64"
 
 # Consecutive failures before an email alert fires (and every Nth after).
 ALERT_AFTER_ATTEMPTS = max(1, int(os.environ.get("ALERT_AFTER_ATTEMPTS", "3")))
@@ -76,6 +76,12 @@ EXPECTED_COLUMNS = {
         "failed_behavior_attempts": "INTEGER NOT NULL DEFAULT 0",
         "email_verified": "BOOLEAN NOT NULL DEFAULT FALSE",
         "account_locked": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "challenge_attempts": "INTEGER NOT NULL DEFAULT 0",
+        "locked_until": "DATETIME",
+        "otp_hash": "VARCHAR(255)",
+        "otp_expires_at": "DATETIME",
+        "otp_history_id": "INTEGER",
+        "challenge_phrase": "VARCHAR(64)",
     },
     "login_history": {
         "latitude": "FLOAT",
@@ -177,12 +183,29 @@ def sample_to_feature_dict(sample):
 
 @app.route("/")
 def login():
-    return render_template("login.html", behavior_challenge=BEHAVIOR_CHALLENGE_PHRASE)
+    return render_template("login.html")
 
 
 @app.route("/register")
 def register_page():
     return render_template("register.html")
+
+
+@app.route("/api/challenge-phrase")
+@limiter.limit("20 per minute")
+def api_challenge_phrase():
+    username = (request.args.get("username") or "").strip()
+    if not username:
+        return jsonify({"success": False, "message": "Username is required"}), 400
+
+    user = db.session.scalar(select(User).where(User.username == username))
+
+    if user is None or not user.challenge_phrase:
+        # Same shape as a real response either way, so this endpoint can't
+        # be used to probe which usernames exist.
+        return jsonify({"success": True, "phrase": DECOY_CHALLENGE_PHRASE})
+
+    return jsonify({"success": True, "phrase": user.challenge_phrase})
 
 
 @app.route("/enroll")
@@ -211,7 +234,15 @@ def enroll_page():
             "message": "Behavioral enrollment already completed for this device"
         }), 409
 
-    return render_template("enroll.html", enrollment_challenge=BEHAVIOR_CHALLENGE_PHRASE)
+    user = db.session.get(User, user_id)
+    if user is None:
+        return jsonify({"success": False, "message": "Account not found"}), 404
+
+    if not user.challenge_phrase:
+        user.challenge_phrase = generate_challenge_phrase()
+        db.session.commit()
+
+    return render_template("enroll.html", enrollment_challenge=user.challenge_phrase)
 
 
 # --------------------------------------------------------------------
@@ -321,13 +352,7 @@ def register():
 
     if not EMAIL_RE.match(email):
         return jsonify({"success": False, "message": "Enter a valid email address"}), 400
-
-    if password == BEHAVIOR_CHALLENGE_PHRASE:
-        return jsonify({
-            "success": False,
-            "message": "Please don't use the behavioral sample phrase as your password"
-        }), 400
-
+    
     existing_user = db.session.scalar(select(User).where(User.username == username))
     if existing_user is not None:
         return jsonify({"success": False, "message": "Username already exists"}), 409
@@ -341,6 +366,7 @@ def register():
         password_hash=generate_password_hash(password),
         email=email,
         phone_number=phone_number,
+        challenge_phrase=generate_challenge_phrase(),
     )
 
     db.session.add(user)
@@ -518,12 +544,7 @@ def reset_password_submit(token):
 
     if len(password) < 8:
         return jsonify({"success": False, "message": "Password must be at least 8 characters"}), 400
-    if password == BEHAVIOR_CHALLENGE_PHRASE:
-        return jsonify({
-            "success": False,
-            "message": "Please don't use the behavioral sample phrase as your password"
-        }), 400
-
+    
     user = db.session.get(User, user_id)
     if user is None:
         return jsonify({"success": False, "message": "Account not found"}), 404
@@ -746,6 +767,22 @@ def process_login():
             "message": "This account has been locked for security. Reset your password to unlock it."
         }), 403
 
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    if user.locked_until and now_utc < user.locked_until:
+        remaining = int((user.locked_until - now_utc).total_seconds() / 60) + 1
+        return jsonify({
+            "success": False,
+            "message": f"Too many suspicious attempts. Try again in {remaining} minute(s), or reset your password to unlock immediately."
+        }), 403
+
+    if user.otp_hash and user.otp_expires_at and now_utc < user.otp_expires_at:
+        return jsonify({
+            "success": False,
+            "requiresOtp": True,
+            "message": "A verification code is already pending for this account. Check your email and enter it."
+        }), 401
+
     device_key = device_fingerprint(user_agent)
 
     profile = db.session.scalar(
@@ -820,7 +857,7 @@ def process_login():
         return jsonify({"success": False, "message": "Behavioral sample is required"}), 400
 
     typed_challenge = (data.get("typedChallenge") or "").strip()
-    if typed_challenge != BEHAVIOR_CHALLENGE_PHRASE:
+    if not user.challenge_phrase or typed_challenge != user.challenge_phrase:
         return jsonify({
             "success": False,
             "message": "Please type the verification phrase exactly as shown"
@@ -893,15 +930,37 @@ def process_login():
     entry = record_attempt(user, ip_address, location, user_agent,
                            decision, match_score, reasons)
 
+    if decision in ("challenge", "blocked"):
+        user.challenge_attempts = (user.challenge_attempts or 0) + 1
+
+        if user.challenge_attempts >= 6:
+            user.locked_until = now_utc + timedelta(minutes=15)
+            user.otp_hash = None
+            user.otp_expires_at = None
+            user.otp_history_id = None
+            db.session.commit()
+
+            register_failure(user, entry, location, ip_address, user_agent,
+                             "behavior", match_score, reasons)
+
+            session.clear()
+            return jsonify({
+                "success": False,
+                "message": "Too many suspicious attempts. This account is locked for 15 minutes. "
+                            "You can also reset your password to unlock it immediately."
+            }), 403
+
+        if user.challenge_attempts >= 3:
+            decision = "challenge"
+
+        db.session.commit()
+
     if decision == "challenge":
         otp_code = f"{secrets.randbelow(1000000):06d}"
-        session["otp_pending"] = {
-            "user_id": user.id,
-            "otp_hash": generate_password_hash(otp_code),
-            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
-            "match_score": match_score,
-            "history_id": entry.id,
-        }
+        user.otp_hash = generate_password_hash(otp_code)
+        user.otp_expires_at = now_utc + timedelta(minutes=5)
+        user.otp_history_id = entry.id
+        db.session.commit()
 
         base_url = PUBLIC_BASE_URL or request.url_root.rstrip("/")
         email_ok, email_detail = send_action_link_email(
@@ -920,11 +979,11 @@ def process_login():
         )
         print(f"[otp email] ok={email_ok} detail={email_detail}")
 
+        session.clear()
         return jsonify({
             "success": False,
             "requiresOtp": True,
-            "message": "Your typing pattern was a partial match. Enter the verification code sent to your email.",
-            "reasons": reasons
+            "message": "Your typing pattern was a partial match. Enter the verification code sent to your email."
         }), 401
 
     if decision == "blocked":
@@ -935,9 +994,7 @@ def process_login():
 
         return jsonify({
             "success": False,
-            "message": "Behavioral verification failed",
-            "score": match_score,
-            "reasons": reasons,
+            "message": "Behavioral verification failed. Please try again.",
             "attempt": user.failed_behavior_attempts,
             "alertTriggered": alert_triggered
         }), 401
@@ -982,34 +1039,43 @@ def process_login():
 @limiter.limit("10 per minute")
 def verify_otp():
     data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
     otp_input = (data.get("otp") or "").strip()
 
-    pending = session.get("otp_pending")
-    if not pending:
+    if not username or not otp_input:
+        return jsonify({"success": False, "message": "Username and code are required."}), 400
+
+    user = db.session.scalar(select(User).where(User.username == username))
+    if user is None or not user.otp_hash or not user.otp_expires_at:
         return jsonify({"success": False, "message": "No pending verification. Please log in again."}), 400
 
-    expires_at = datetime.fromisoformat(pending["expires_at"])
-    if datetime.now(timezone.utc) > expires_at:
-        session.pop("otp_pending", None)
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    if now_utc > user.otp_expires_at:
+        user.otp_hash = None
+        user.otp_expires_at = None
+        user.otp_history_id = None
+        db.session.commit()
         return jsonify({"success": False, "message": "This code has expired. Please log in again."}), 400
 
-    if not check_password_hash(pending["otp_hash"], otp_input):
+    if not check_password_hash(user.otp_hash, otp_input):
         return jsonify({"success": False, "message": "Incorrect code. Please try again."}), 401
 
-    user = db.session.get(User, pending["user_id"])
-    if user is None:
-        session.pop("otp_pending", None)
-        return jsonify({"success": False, "message": "Account not found."}), 404
-
-    entry = db.session.get(LoginHistory, pending["history_id"])
+    entry = db.session.get(LoginHistory, user.otp_history_id) if user.otp_history_id else None
     if entry:
         entry.decision = "allowed"
         entry.reasoning = (entry.reasoning or "") + "\nVerified via email OTP"
 
+    match_score = entry.match_score if entry else None
+
     user.failed_behavior_attempts = 0
+    user.challenge_attempts = 0
+    user.otp_hash = None
+    user.otp_expires_at = None
+    user.otp_history_id = None
     db.session.commit()
 
-    session.pop("otp_pending", None)
+    session.clear()
     session["user_id"] = user.id
 
     ip_address = get_client_ip(request)
@@ -1023,7 +1089,7 @@ def verify_otp():
         "username": user.username,
         "ip": ip_address,
         "location_label": entry.location_label() if entry else "Unknown location",
-        "match_score": pending["match_score"],
+        "match_score": match_score,
         "reasons": ["Verified via email OTP after a partial behavioral match"],
         "lat": location.get("lat"),
         "lon": location.get("lon"),

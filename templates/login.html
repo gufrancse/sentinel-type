@@ -32,7 +32,10 @@
         >
 
         <label>Type this to verify it's you</label>
-        <span id="challengePhrase" class="challenge-badge">{{ behavior_challenge }}</span>
+        <p id="phraseStatus" class="muted" style="font-size: 13px; margin: 4px 0;">
+            Enter your username above to load your verification phrase.
+        </p>
+        <span id="challengePhrase" class="challenge-badge"></span>
         <input
             type="text"
             id="challengeInput"
@@ -40,7 +43,8 @@
             autocorrect="off"
             autocapitalize="off"
             spellcheck="false"
-            placeholder="Type the phrase above exactly"
+            placeholder="Enter your username first"
+            disabled
             required
         >
 

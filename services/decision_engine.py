@@ -1,7 +1,7 @@
 from services import ml_model
 from services.behavioral_verification import calculate_behavior_score, explain_differences
 ALLOW_THRESHOLD = 50.0
-CHALLENGE_THRESHOLD = 30.0
+CHALLENGE_THRESHOLD = 40.0
 ML_WEIGHT = 0.4
 DIFF_WEIGHT = 0.6
 BASELINE_ADAPTATION_THRESHOLD = 80.0

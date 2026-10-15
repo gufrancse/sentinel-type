@@ -1,7 +1,11 @@
 const loginForm = document.getElementById("loginForm");
+const usernameInput = document.getElementById("username");
 const challengeInput = document.getElementById("challengeInput");
+const challengePhraseEl = document.getElementById("challengePhrase");
+const phraseStatusEl = document.getElementById("phraseStatus");
 const loginButton = document.getElementById("loginButton");
-const expectedChallenge = document.getElementById("challengePhrase").textContent.trim();
+
+let expectedChallenge = "";
 
 let keyDownTimes = {};
 let lastKeyUpTime = null;
@@ -35,6 +39,51 @@ challengeInput.addEventListener("focus", () => {
     resetKeystrokeData();
     resetMouseData();
 });
+
+/* ================================
+   PER-USER CHALLENGE PHRASE — fetched once username is known, instead
+   of one phrase shared by every account.
+================================ */
+
+async function loadChallengePhrase() {
+    const username = usernameInput.value.trim();
+
+    if (!username) {
+        expectedChallenge = "";
+        challengePhraseEl.textContent = "";
+        challengeInput.disabled = true;
+        challengeInput.placeholder = "Enter your username first";
+        phraseStatusEl.textContent = "Enter your username above to load your verification phrase.";
+        return;
+    }
+
+    phraseStatusEl.textContent = "Loading your verification phrase...";
+
+    try {
+        const response = await fetch(`/api/challenge-phrase?username=${encodeURIComponent(username)}`);
+        const data = await response.json();
+
+        if (response.ok && data.phrase) {
+            expectedChallenge = data.phrase;
+            challengePhraseEl.textContent = data.phrase;
+            challengeInput.disabled = false;
+            challengeInput.placeholder = "Type the phrase above exactly";
+            phraseStatusEl.textContent = "";
+        } else {
+            phraseStatusEl.textContent = "Could not load the phrase. Try re-entering your username.";
+        }
+    } catch (error) {
+        console.error("Failed to load challenge phrase:", error);
+        phraseStatusEl.textContent = "Could not load the phrase. Check your connection and try again.";
+    }
+
+    challengeInput.value = "";
+    resetKeystrokeData();
+    loginButton.disabled = true;
+}
+
+usernameInput.addEventListener("blur", loadChallengePhrase);
+usernameInput.addEventListener("change", loadChallengePhrase);
 
 /* Catches Ctrl+V, right-click paste, and drag-and-drop text — all of
    these bypass real typing rhythm, so we flag them instead of letting
@@ -269,7 +318,7 @@ document.getElementById("otpSubmitBtn").addEventListener("click", async () => {
         const response = await fetch("/verify-otp", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ otp })
+            body: JSON.stringify({ otp, username: usernameInput.value.trim() })
         });
 
         const data = await response.json();

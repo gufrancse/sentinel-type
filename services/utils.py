@@ -123,3 +123,29 @@ def device_fingerprint(user_agent):
     """
     info = parse_user_agent(user_agent)
     return f"{info['os']}:{info['device']}".lower()
+
+import secrets
+
+_PHRASE_WORDS = [
+    "Phoenix", "Raven", "Falcon", "Nebula", "Zenith", "Cobalt", "Quartz",
+    "Ember", "Glacier", "Mirage", "Comet", "Lumen", "Vortex", "Onyx",
+    "Tundra", "Cipher", "Nomad", "Aurora", "Nova", "Specter",
+]
+_PHRASE_SYMBOLS = "!@#$%^&*"
+
+
+def generate_challenge_phrase() -> str:
+    """Generates a unique, fixed-format behavioral-capture phrase for one
+    user: Word + 2-digit number + symbol + Word + 2-digit number.
+
+    The shape/length is kept consistent across all users (not fully
+    random) because the dwell/flight-time comparison assumes a roughly
+    comparable phrase - wildly different lengths would make typing-speed
+    and duration features incomparable across users.
+    """
+    w1 = secrets.choice(_PHRASE_WORDS)
+    w2 = secrets.choice([w for w in _PHRASE_WORDS if w != w1])
+    n1 = f"{secrets.randbelow(90) + 10}"
+    n2 = f"{secrets.randbelow(90) + 10}"
+    sym = secrets.choice(_PHRASE_SYMBOLS)
+    return f"{w1}{n1}{sym}{w2}{n2}"
