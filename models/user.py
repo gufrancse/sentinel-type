@@ -25,7 +25,10 @@ class User(db.Model):
     otp_hash = db.Column(db.String(255), nullable=True)
     otp_expires_at = db.Column(db.DateTime, nullable=True)
     otp_history_id = db.Column(db.Integer, nullable=True)
-
+    otp_wrong_count = db.Column(db.Integer, nullable=False, default=0)
+    otp_resend_count = db.Column(db.Integer, nullable=False, default=0)
+    otp_lockout_stage = db.Column(db.Integer, nullable=False, default=0)
+    otp_locked_until = db.Column(db.DateTime, nullable=True)
     challenge_phrase = db.Column(db.String(64), nullable=True)
 
     created_at = db.Column(

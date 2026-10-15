@@ -289,6 +289,8 @@ loginForm.addEventListener("submit", async (event) => {
             document.getElementById("otpSection").style.display = "block";
             document.getElementById("otpStatus").textContent = data.message || "Enter the code sent to your email.";
             document.getElementById("otpStatus").style.color = "#94a3b8";
+            clearOtpBoxes();
+            startOtpCountdown(120);
         } else {
             const reasonsText = data.reasons ? "\n\n" + data.reasons.join("\n") : "";
             alert((data.message || "Login failed.") + reasonsText);
@@ -304,8 +306,65 @@ loginForm.addEventListener("submit", async (event) => {
         alert("Login request failed. Please try again.");
     }
 });
+const otpBoxes = document.querySelectorAll(".otp-box");
+const otpTimerEl = document.getElementById("otpTimer");
+const resendOtpLink = document.getElementById("resendOtpLink");
+let otpCountdownInterval = null;
+
+function startOtpCountdown(seconds) {
+    clearInterval(otpCountdownInterval);
+    let remaining = seconds;
+    updateOtpTimerText(remaining);
+    otpCountdownInterval = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) {
+            clearInterval(otpCountdownInterval);
+            otpTimerEl.textContent = "expired";
+            return;
+        }
+        updateOtpTimerText(remaining);
+    }, 1000);
+}
+
+function updateOtpTimerText(remaining) {
+    const m = Math.floor(remaining / 60);
+    const s = remaining % 60;
+    otpTimerEl.textContent = `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function clearOtpBoxes() {
+    otpBoxes.forEach((b) => (b.value = ""));
+    if (otpBoxes[0]) otpBoxes[0].focus();
+}
+
+function getOtpValue() {
+    return Array.from(otpBoxes).map((b) => b.value).join("");
+}
+
+otpBoxes.forEach((box, i) => {
+    box.addEventListener("input", () => {
+        box.value = box.value.replace(/[^0-9]/g, "");
+        if (box.value && i < otpBoxes.length - 1) {
+            otpBoxes[i + 1].focus();
+        }
+    });
+    box.addEventListener("keydown", (e) => {
+        if (e.key === "Backspace" && !box.value && i > 0) {
+            otpBoxes[i - 1].focus();
+        }
+    });
+    box.addEventListener("paste", (e) => {
+        e.preventDefault();
+        const pasted = (e.clipboardData.getData("text") || "").replace(/[^0-9]/g, "").slice(0, 6);
+        pasted.split("").forEach((digit, idx) => {
+            if (otpBoxes[idx]) otpBoxes[idx].value = digit;
+        });
+        if (pasted.length) otpBoxes[Math.min(pasted.length, otpBoxes.length) - 1].focus();
+    });
+});
+
 document.getElementById("otpSubmitBtn").addEventListener("click", async () => {
-    const otp = document.getElementById("otpInput").value.trim();
+    const otp = getOtpValue();
     const statusEl = document.getElementById("otpStatus");
 
     if (otp.length !== 6) {
@@ -326,12 +385,41 @@ document.getElementById("otpSubmitBtn").addEventListener("click", async () => {
         if (response.ok) {
             statusEl.textContent = data.message || "Verified!";
             statusEl.style.color = "lightgreen";
+            clearInterval(otpCountdownInterval);
             setTimeout(() => {
                 window.location.href = data.redirect || "/dashboard";
             }, 800);
         } else {
             statusEl.textContent = data.message || "Verification failed.";
             statusEl.style.color = "salmon";
+            clearOtpBoxes();
+        }
+    } catch (error) {
+        statusEl.textContent = "Request failed. Please try again.";
+        statusEl.style.color = "salmon";
+    }
+});
+
+resendOtpLink.addEventListener("click", async (e) => {
+    e.preventDefault();
+    const statusEl = document.getElementById("otpStatus");
+    statusEl.textContent = "Sending a new code...";
+    statusEl.style.color = "#94a3b8";
+
+    try {
+        const response = await fetch("/resend-otp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: usernameInput.value.trim() })
+        });
+        const data = await response.json();
+
+        statusEl.textContent = data.message || "";
+        statusEl.style.color = response.ok ? "lightgreen" : "salmon";
+
+        if (response.ok) {
+            clearOtpBoxes();
+            startOtpCountdown(120);
         }
     } catch (error) {
         statusEl.textContent = "Request failed. Please try again.";

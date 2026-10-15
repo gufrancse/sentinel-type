@@ -68,18 +68,25 @@
         used to measure your typing rhythm, it isn't a secret.
     </p>
 
-    <div id="otpSection" style="display:none; margin-top:20px;">
-        <label>Verification code</label>
-        <input
-            type="text"
-            id="otpInput"
-            maxlength="6"
-            inputmode="numeric"
-            autocomplete="one-time-code"
-            placeholder="6-digit code from your email"
-        >
-        <button type="button" id="otpSubmitBtn">Verify code</button>
+    <div id="otpSection" style="display:none; margin-top:24px;">
+        <h3 style="margin-bottom:4px;">Enter verification code</h3>
+        <p class="muted" style="font-size:13px; margin:0 0 14px;">
+            We sent a 6-digit code to your email. It expires in
+            <span id="otpTimer">2:00</span>.
+        </p>
+        <div id="otpBoxesWrap" style="display:flex; gap:8px;">
+            <input type="text" maxlength="1" inputmode="numeric" class="otp-box" data-index="0" style="width:42px; height:50px; text-align:center; font-size:22px;">
+            <input type="text" maxlength="1" inputmode="numeric" class="otp-box" data-index="1" style="width:42px; height:50px; text-align:center; font-size:22px;">
+            <input type="text" maxlength="1" inputmode="numeric" class="otp-box" data-index="2" style="width:42px; height:50px; text-align:center; font-size:22px;">
+            <input type="text" maxlength="1" inputmode="numeric" class="otp-box" data-index="3" style="width:42px; height:50px; text-align:center; font-size:22px;">
+            <input type="text" maxlength="1" inputmode="numeric" class="otp-box" data-index="4" style="width:42px; height:50px; text-align:center; font-size:22px;">
+            <input type="text" maxlength="1" inputmode="numeric" class="otp-box" data-index="5" style="width:42px; height:50px; text-align:center; font-size:22px;">
+        </div>
+        <button type="button" id="otpSubmitBtn" style="margin-top:16px;">Verify code</button>
         <p id="otpStatus" style="margin-top:10px;"></p>
+        <p style="margin-top:10px; font-size:13px;">
+            Didn't get it? <a href="#" id="resendOtpLink">Resend code</a>
+        </p>
     </div>
 
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>

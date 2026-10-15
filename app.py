@@ -83,6 +83,10 @@ EXPECTED_COLUMNS = {
         "otp_expires_at": "TIMESTAMP",
         "otp_history_id": "INTEGER",
         "challenge_phrase": "VARCHAR(64)",
+        "otp_wrong_count": "INTEGER NOT NULL DEFAULT 0",
+        "otp_resend_count": "INTEGER NOT NULL DEFAULT 0",
+        "otp_lockout_stage": "INTEGER NOT NULL DEFAULT 0",
+        "otp_locked_until": "TIMESTAMP",
     },
     "login_history": {
         "latitude": "FLOAT",
@@ -785,6 +789,13 @@ def process_login():
             "message": f"Too many suspicious attempts. Try again in {remaining} minute(s), or reset your password to unlock immediately."
         }), 403
 
+    if user.otp_locked_until and now_utc < user.otp_locked_until:
+        remaining = int((user.otp_locked_until - now_utc).total_seconds() / 60) + 1
+        return jsonify({
+            "success": False,
+            "message": f"Too many incorrect codes. Try again in {remaining} minute(s), or reset your password to unlock immediately."
+        }), 403
+
     if user.otp_hash and user.otp_expires_at and now_utc < user.otp_expires_at:
         return jsonify({
             "success": False,
@@ -939,36 +950,27 @@ def process_login():
     entry = record_attempt(user, ip_address, location, user_agent,
                            decision, match_score, reasons)
 
-    if decision in ("challenge", "blocked"):
+    if decision != "allowed":
         user.challenge_attempts = (user.challenge_attempts or 0) + 1
 
-        if user.challenge_attempts >= 6:
-            user.locked_until = now_utc + timedelta(minutes=15)
-            user.otp_hash = None
-            user.otp_expires_at = None
-            user.otp_history_id = None
+        # First two bad attempts: just let them retry - a genuine user can
+        # fumble the phrase once or twice without being treated as a threat.
+        if user.challenge_attempts < 3:
             db.session.commit()
-
-            register_failure(user, entry, location, ip_address, user_agent,
-                             "behavior", match_score, reasons)
-
             session.clear()
             return jsonify({
                 "success": False,
-                "message": "Too many suspicious attempts. This account is locked for 15 minutes. "
-                            "You can also reset your password to unlock it immediately."
-            }), 403
+                "message": "Behavioral verification failed. Please try again."
+            }), 401
 
-        if user.challenge_attempts >= 3:
-            decision = "challenge"
-
-        db.session.commit()
-
-    if decision == "challenge":
+        # 3rd (or later) consecutive bad attempt - require an email OTP
+        # before this device gets another chance.
         otp_code = f"{secrets.randbelow(1000000):06d}"
         user.otp_hash = generate_password_hash(otp_code)
-        user.otp_expires_at = now_utc + timedelta(minutes=5)
+        user.otp_expires_at = now_utc + timedelta(minutes=2)
         user.otp_history_id = entry.id
+        user.otp_wrong_count = 0
+        user.otp_resend_count = 0
         db.session.commit()
 
         base_url = PUBLIC_BASE_URL or request.url_root.rstrip("/")
@@ -977,35 +979,26 @@ def process_login():
             username=user.username,
             title="Your SentinelType verification code",
             message_html=(
-                "Your typing pattern was a partial match, so we need one more check "
-                "before letting you in. Enter this code to finish logging in:<br><br>"
+                "Your typing pattern didn't match closely enough across a few attempts, "
+                "so we need one more check before letting you in. Enter this code to "
+                "finish logging in:<br><br>"
                 f"<strong style=\"font-size:28px;letter-spacing:4px;\">{otp_code}</strong>"
-                "<br><br>This code expires in 5 minutes."
+                "<br><br>This code expires in 2 minutes."
             ),
             button_label="Go to login",
             action_url=f"{base_url}/",
-            expiry_note="This code expires in 5 minutes.",
+            expiry_note="This code expires in 2 minutes.",
         )
         print(f"[otp email] ok={email_ok} detail={email_detail}")
+
+        register_failure(user, entry, location, ip_address, user_agent,
+                         "behavior", match_score, reasons)
 
         session.clear()
         return jsonify({
             "success": False,
             "requiresOtp": True,
-            "message": "Your typing pattern was a partial match. Enter the verification code sent to your email."
-        }), 401
-
-    if decision == "blocked":
-        session.clear()
-
-        alert_triggered = register_failure(user, entry, location, ip_address, user_agent,
-                                           "behavior", match_score, reasons)
-
-        return jsonify({
-            "success": False,
-            "message": "Behavioral verification failed. Please try again.",
-            "attempt": user.failed_behavior_attempts,
-            "alertTriggered": alert_triggered
+            "message": "Your typing pattern didn't match closely enough. Enter the verification code sent to your email."
         }), 401
 
     user.failed_behavior_attempts = 0
@@ -1060,6 +1053,10 @@ def verify_otp():
 
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
+    if user.otp_locked_until and now_utc < user.otp_locked_until:
+        remaining = int((user.otp_locked_until - now_utc).total_seconds() / 60) + 1
+        return jsonify({"success": False, "message": f"Too many incorrect codes. Try again in {remaining} minute(s)."}), 403
+
     if now_utc > user.otp_expires_at:
         user.otp_hash = None
         user.otp_expires_at = None
@@ -1068,7 +1065,36 @@ def verify_otp():
         return jsonify({"success": False, "message": "This code has expired. Please log in again."}), 400
 
     if not check_password_hash(user.otp_hash, otp_input):
-        return jsonify({"success": False, "message": "Incorrect code. Please try again."}), 401
+        user.otp_wrong_count = (user.otp_wrong_count or 0) + 1
+
+        if user.otp_wrong_count >= 4:
+            if user.otp_lockout_stage == 0:
+                user.otp_locked_until = now_utc + timedelta(minutes=15)
+                user.otp_lockout_stage = 1
+                lock_msg = "Too many incorrect codes. You can try again in 15 minutes, or reset your password to unlock immediately."
+            elif user.otp_lockout_stage == 1:
+                user.otp_locked_until = now_utc + timedelta(minutes=30)
+                user.otp_lockout_stage = 2
+                lock_msg = "Too many incorrect codes again. You can try again in 30 minutes, or reset your password to unlock immediately."
+            else:
+                user.account_locked = True
+                lock_msg = "Too many incorrect codes. This account is now locked - reset your password to unlock it."
+
+            user.otp_wrong_count = 0
+            user.otp_resend_count = 0
+            user.otp_hash = None
+            user.otp_expires_at = None
+            user.otp_history_id = None
+            db.session.commit()
+
+            return jsonify({"success": False, "message": lock_msg}), 403
+
+        db.session.commit()
+        remaining_tries = 4 - user.otp_wrong_count
+        return jsonify({
+            "success": False,
+            "message": f"Incorrect code. {remaining_tries} attempt(s) left before a temporary lock."
+        }), 401
 
     entry = db.session.get(LoginHistory, user.otp_history_id) if user.otp_history_id else None
     if entry:
@@ -1082,6 +1108,10 @@ def verify_otp():
     user.otp_hash = None
     user.otp_expires_at = None
     user.otp_history_id = None
+    user.otp_wrong_count = 0
+    user.otp_resend_count = 0
+    user.otp_lockout_stage = 0
+    user.otp_locked_until = None
     db.session.commit()
 
     session.clear()
@@ -1109,6 +1139,67 @@ def verify_otp():
     })
 
     return jsonify({"success": True, "message": "Verified! Logging you in.", "redirect": "/dashboard"})
+
+
+@app.route("/resend-otp", methods=["POST"])
+@limiter.limit("5 per minute")
+def resend_otp():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+
+    user = db.session.scalar(select(User).where(User.username == username))
+    if user is None or not user.otp_history_id:
+        return jsonify({"success": False, "message": "No pending verification. Please log in again."}), 400
+
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    if user.otp_locked_until and now_utc < user.otp_locked_until:
+        remaining = int((user.otp_locked_until - now_utc).total_seconds() / 60) + 1
+        return jsonify({"success": False, "message": f"Too many attempts. Try again in {remaining} minute(s)."}), 403
+
+    if user.otp_lockout_stage >= 1:
+        if user.otp_resend_count >= 2:
+            if user.otp_lockout_stage == 1:
+                user.otp_locked_until = now_utc + timedelta(minutes=30)
+                user.otp_lockout_stage = 2
+                lock_msg = "Too many resend requests. You can try again in 30 minutes, or reset your password to unlock immediately."
+            else:
+                user.account_locked = True
+                lock_msg = "Too many resend requests. This account is now locked - reset your password to unlock it."
+
+            user.otp_wrong_count = 0
+            user.otp_resend_count = 0
+            user.otp_hash = None
+            user.otp_expires_at = None
+            user.otp_history_id = None
+            db.session.commit()
+            return jsonify({"success": False, "message": lock_msg}), 403
+
+        user.otp_resend_count += 1
+
+    otp_code = f"{secrets.randbelow(1000000):06d}"
+    user.otp_hash = generate_password_hash(otp_code)
+    user.otp_expires_at = now_utc + timedelta(minutes=2)
+    user.otp_wrong_count = 0
+    db.session.commit()
+
+    base_url = PUBLIC_BASE_URL or request.url_root.rstrip("/")
+    email_ok, email_detail = send_action_link_email(
+        to_email=user.email,
+        username=user.username,
+        title="Your new SentinelType verification code",
+        message_html=(
+            "Here's your new verification code:<br><br>"
+            f"<strong style=\"font-size:28px;letter-spacing:4px;\">{otp_code}</strong>"
+            "<br><br>This code expires in 2 minutes."
+        ),
+        button_label="Go to login",
+        action_url=f"{base_url}/",
+        expiry_note="This code expires in 2 minutes.",
+    )
+    print(f"[resend-otp email] ok={email_ok} detail={email_detail}")
+
+    return jsonify({"success": True, "message": "A new code has been sent to your email."})
 
 @app.route("/api/enrollment", methods=["POST"])
 def enrollment():
