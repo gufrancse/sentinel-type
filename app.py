@@ -358,22 +358,41 @@ def register():
         return jsonify({"success": False, "message": "Enter a valid email address"}), 400
     
     existing_user = db.session.scalar(select(User).where(User.username == username))
+
+    resuming_abandoned_registration = False
     if existing_user is not None:
-        return jsonify({"success": False, "message": "Username already exists"}), 409
+        has_profile = db.session.scalar(
+            select(BehavioralProfile.id).where(BehavioralProfile.user_id == existing_user.id).limit(1)
+        ) is not None
+
+        if has_profile:
+            return jsonify({"success": False, "message": "Username already exists"}), 409
+
+        # Username was registered before but behavioral enrollment was never
+        # completed on any device - let them restart cleanly instead of
+        # being stuck forever on an abandoned registration.
+        resuming_abandoned_registration = True
 
     existing_email = db.session.scalar(select(User).where(User.email == email))
-    if existing_email is not None:
+    if existing_email is not None and (existing_user is None or existing_email.id != existing_user.id):
         return jsonify({"success": False, "message": "Email already registered"}), 409
 
-    user = User(
-        username=username,
-        password_hash=generate_password_hash(password),
-        email=email,
-        phone_number=phone_number,
-        challenge_phrase=generate_challenge_phrase(),
-    )
+    if resuming_abandoned_registration:
+        existing_user.password_hash = generate_password_hash(password)
+        existing_user.email = email
+        existing_user.email_verified = False
+        existing_user.phone_number = phone_number
+        user = existing_user
+    else:
+        user = User(
+            username=username,
+            password_hash=generate_password_hash(password),
+            email=email,
+            phone_number=phone_number,
+            challenge_phrase=generate_challenge_phrase(),
+        )
+        db.session.add(user)
 
-    db.session.add(user)
     db.session.commit()
 
     session.clear()
