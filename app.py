@@ -1314,6 +1314,144 @@ def enrollment():
         "redirect": "/"
     }), 201
 
+# --------------------------------------------------------------------
+# External integration API - lets any third-party application's own
+# backend call SentinelType as a pluggable risk-scoring service, without
+# using SentinelType's own session/login system. Protected by a shared
+# secret API key (server-to-server only - never call this from a browser,
+# since the key would be exposed).
+# --------------------------------------------------------------------
+
+SENTINEL_API_KEY = os.environ.get("SENTINEL_API_KEY", "")
+
+
+def require_api_key():
+    key = request.headers.get("X-Sentinel-Api-Key", "")
+    return bool(SENTINEL_API_KEY) and key == SENTINEL_API_KEY
+
+
+@app.route("/api/v1/enroll", methods=["POST"])
+@limiter.limit("20 per minute")
+def api_v1_enroll():
+    if not require_api_key():
+        return jsonify({"success": False, "message": "Invalid or missing API key"}), 401
+
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    samples = data.get("samples")
+
+    if not username:
+        return jsonify({"success": False, "message": "username is required"}), 400
+    if not isinstance(samples, list) or len(samples) < 5:
+        return jsonify({"success": False, "message": "At least 5 behavioral samples are required"}), 400
+
+    user = db.session.scalar(select(User).where(User.username == username))
+    if user is None:
+        # This account only holds the behavioral baseline - the third-party
+        # app keeps owning the real password, SentinelType never sees it.
+        user = User(
+            username=username,
+            password_hash=generate_password_hash(secrets.token_hex(16)),
+            email=f"{username}@external.local",
+            email_verified=True,
+            challenge_phrase=generate_challenge_phrase(),
+        )
+        db.session.add(user)
+        db.session.flush()
+
+    validated_samples = []
+    for sample in samples:
+        is_valid, err = validate_behavioral_sample(sample)
+        if not is_valid:
+            return jsonify({"success": False, "message": err}), 400
+        validated_samples.append(sample_to_feature_dict(sample))
+
+    sample_count = len(validated_samples)
+
+    def _avg(key):
+        return sum(s[key] for s in validated_samples) / sample_count
+
+    device_key = "external"
+    profile = db.session.scalar(
+        select(BehavioralProfile).where(
+            BehavioralProfile.user_id == user.id,
+            BehavioralProfile.device_fingerprint == device_key,
+        )
+    )
+    if profile is None:
+        profile = BehavioralProfile(
+            user_id=user.id, device_fingerprint=device_key, sample_count=0,
+            average_dwell_time=0, average_flight_time=0,
+            average_typing_speed_wpm=0, average_typing_duration=0,
+        )
+        db.session.add(profile)
+
+    profile.average_dwell_time = _avg("averageDwellTime")
+    profile.average_flight_time = _avg("averageFlightTime")
+    profile.average_typing_speed_wpm = _avg("typingSpeedWPM")
+    profile.average_typing_duration = _avg("typingDuration")
+    profile.average_mouse_speed = _avg("averageMouseSpeed")
+    profile.average_click_interval = _avg("averageClickInterval")
+    profile.sample_count = sample_count
+
+    for s in validated_samples:
+        db.session.add(BehavioralSample(
+            user_id=user.id,
+            average_dwell_time=s["averageDwellTime"],
+            average_flight_time=s["averageFlightTime"],
+            typing_duration=s["typingDuration"],
+            typing_speed_wpm=s["typingSpeedWPM"],
+            average_mouse_speed=s["averageMouseSpeed"],
+            average_click_interval=s["averageClickInterval"],
+        ))
+
+    model_path = ml_model.train_and_save(user.id, validated_samples, device_fingerprint=device_key)
+    profile.ml_model_path = model_path
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "message": "Enrolled",
+        "challengePhrase": user.challenge_phrase
+    }), 201
+
+
+@app.route("/api/v1/verify", methods=["POST"])
+@limiter.limit("30 per minute")
+def api_v1_verify():
+    if not require_api_key():
+        return jsonify({"success": False, "message": "Invalid or missing API key"}), 401
+
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    sample = data.get("behavioralSample")
+
+    user = db.session.scalar(select(User).where(User.username == username))
+    if user is None:
+        return jsonify({"success": False, "message": "Unknown username - enroll first"}), 404
+
+    device_key = "external"
+    profile = db.session.scalar(
+        select(BehavioralProfile).where(
+            BehavioralProfile.user_id == user.id,
+            BehavioralProfile.device_fingerprint == device_key,
+        )
+    )
+    if profile is None:
+        return jsonify({"success": False, "message": "No behavioral baseline enrolled for this user"}), 404
+
+    is_valid, err = validate_behavioral_sample(sample)
+    if not is_valid:
+        return jsonify({"success": False, "message": err}), 400
+
+    result = evaluate_login(user.id, profile, sample_to_feature_dict(sample))
+
+    return jsonify({
+        "success": True,
+        "matchScore": result["match_score"],
+        "decision": result["decision"],
+        "reasons": result["reasons"],
+    })
 
 if __name__ == "__main__":
     app.run(debug=True)
