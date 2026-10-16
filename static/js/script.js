@@ -311,8 +311,21 @@ const otpTimerEl = document.getElementById("otpTimer");
 const resendOtpLink = document.getElementById("resendOtpLink");
 let otpCountdownInterval = null;
 
+function disableResendLink() {
+    resendOtpLink.style.pointerEvents = "none";
+    resendOtpLink.style.opacity = "0.4";
+    resendOtpLink.textContent = "Resend code";
+}
+
+function enableResendLink() {
+    resendOtpLink.style.pointerEvents = "auto";
+    resendOtpLink.style.opacity = "1";
+    resendOtpLink.textContent = "Resend code";
+}
+
 function startOtpCountdown(seconds) {
     clearInterval(otpCountdownInterval);
+    disableResendLink();
     let remaining = seconds;
     updateOtpTimerText(remaining);
     otpCountdownInterval = setInterval(() => {
@@ -320,6 +333,7 @@ function startOtpCountdown(seconds) {
         if (remaining <= 0) {
             clearInterval(otpCountdownInterval);
             otpTimerEl.textContent = "expired";
+            enableResendLink();
             return;
         }
         updateOtpTimerText(remaining);
@@ -402,7 +416,14 @@ document.getElementById("otpSubmitBtn").addEventListener("click", async () => {
 
 resendOtpLink.addEventListener("click", async (e) => {
     e.preventDefault();
+
+    if (resendOtpLink.style.pointerEvents === "none") {
+        return;
+    }
+
     const statusEl = document.getElementById("otpStatus");
+    disableResendLink();
+    resendOtpLink.textContent = "Sending...";
     statusEl.textContent = "Sending a new code...";
     statusEl.style.color = "#94a3b8";
 
@@ -420,9 +441,12 @@ resendOtpLink.addEventListener("click", async (e) => {
         if (response.ok) {
             clearOtpBoxes();
             startOtpCountdown(120);
+        } else {
+            enableResendLink();
         }
     } catch (error) {
         statusEl.textContent = "Request failed. Please try again.";
         statusEl.style.color = "salmon";
+        enableResendLink();
     }
 });
