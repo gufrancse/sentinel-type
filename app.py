@@ -1002,6 +1002,7 @@ def process_login():
         }), 401
 
     user.failed_behavior_attempts = 0
+    user.challenge_attempts = 0
 
     if match_score >= BASELINE_ADAPTATION_THRESHOLD:
         adapt_profile(profile, sample)
