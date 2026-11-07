@@ -1,18 +1,3 @@
-"""
-Module 5 — Anomaly Detection Model (Core ML Engine).
-
-Trains one Isolation Forest per user on their enrollment samples
-(keystroke + mouse dynamics). Isolation Forest is used deliberately
-because it only needs "normal" behavior to learn from — we never have
-impostor/attack data available for a real user, so a one-class model
-is the right fit.
-
-Each user's trained model + scaler is pickled to disk under
-instance/ml_models/user_<id>.joblib together with the min/max of the
-training anomaly scores, which we use to normalize a live score into
-an intuitive 0-100 "match score" (Module 5 output spec).
-"""
-
 import os
 import numpy as np
 import joblib
